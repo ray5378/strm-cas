@@ -7,15 +7,22 @@ import (
 )
 
 type ProgressInfo struct {
-	Job             STRMJob `json:"job"`
-	Stage           string  `json:"stage"`
-	FileName        string  `json:"file_name,omitempty"`
-	DownloadPath    string  `json:"download_path,omitempty"`
-	CASPath         string  `json:"cas_path,omitempty"`
-	DownloadedBytes int64   `json:"downloaded_bytes,omitempty"`
-	TotalBytes      int64   `json:"total_bytes,omitempty"`
-	Message         string  `json:"message,omitempty"`
-	UpdatedAt       string  `json:"updated_at"`
+	Job              STRMJob `json:"job"`
+	Stage            string  `json:"stage"`
+	FileName         string  `json:"file_name,omitempty"`
+	DownloadPath     string  `json:"download_path,omitempty"`
+	CASPath          string  `json:"cas_path,omitempty"`
+	DownloadedBytes  int64   `json:"downloaded_bytes,omitempty"`
+	TotalBytes       int64   `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64   `json:"speed_bytes_per_sec,omitempty"`
+	ETASeconds       int64   `json:"eta_seconds,omitempty"`
+	Message          string  `json:"message,omitempty"`
+	UpdatedAt        string  `json:"updated_at"`
+}
+
+type progressSample struct {
+	DownloadedBytes int64
+	At              time.Time
 }
 
 type RuntimeStore struct {
@@ -26,6 +33,7 @@ type RuntimeStore struct {
 	endedAt          string
 	current          *ProgressInfo
 	active           map[string]ProgressInfo
+	samples          map[string]progressSample
 	downloaded       []ProgressInfo
 	completed        []STRMProcessResult
 	maxHistory       int
@@ -35,7 +43,7 @@ func NewRuntimeStore(maxHistory int) *RuntimeStore {
 	if maxHistory <= 0 {
 		maxHistory = 500
 	}
-	return &RuntimeStore{maxHistory: maxHistory, active: make(map[string]ProgressInfo)}
+	return &RuntimeStore{maxHistory: maxHistory, active: make(map[string]ProgressInfo), samples: make(map[string]progressSample)}
 }
 
 func (r *RuntimeStore) Reset() {
@@ -47,6 +55,7 @@ func (r *RuntimeStore) Reset() {
 	r.endedAt = ""
 	r.current = nil
 	r.active = make(map[string]ProgressInfo)
+	r.samples = make(map[string]progressSample)
 	r.downloaded = nil
 	r.completed = nil
 }
@@ -60,6 +69,7 @@ func (r *RuntimeStore) MarkStarted() {
 	r.endedAt = ""
 	r.current = nil
 	r.active = make(map[string]ProgressInfo)
+	r.samples = make(map[string]progressSample)
 	r.downloaded = nil
 	r.completed = nil
 }
@@ -72,6 +82,7 @@ func (r *RuntimeStore) MarkFinished() {
 	r.endedAt = time.Now().Format(time.RFC3339)
 	r.current = nil
 	r.active = make(map[string]ProgressInfo)
+	r.samples = make(map[string]progressSample)
 }
 
 func (r *RuntimeStore) SetGracefulStopping(v bool) {
@@ -89,7 +100,25 @@ func (r *RuntimeStore) IsGracefulStopping() bool {
 func (r *RuntimeStore) SetCurrent(p ProgressInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	p.UpdatedAt = time.Now().Format(time.RFC3339)
+	now := time.Now()
+	if p.Job.STRMPath != "" {
+		if prev, ok := r.samples[p.Job.STRMPath]; ok {
+			deltaBytes := p.DownloadedBytes - prev.DownloadedBytes
+			deltaTime := now.Sub(prev.At).Seconds()
+			if deltaBytes > 0 && deltaTime > 0.2 {
+				speed := int64(float64(deltaBytes) / deltaTime)
+				if speed > 0 {
+					p.SpeedBytesPerSec = speed
+					if p.TotalBytes > p.DownloadedBytes {
+						remaining := p.TotalBytes - p.DownloadedBytes
+						p.ETASeconds = remaining / speed
+					}
+				}
+			}
+		}
+		r.samples[p.Job.STRMPath] = progressSample{DownloadedBytes: p.DownloadedBytes, At: now}
+	}
+	p.UpdatedAt = now.Format(time.RFC3339)
 	cp := p
 	r.current = &cp
 	if p.Job.STRMPath != "" {
@@ -104,6 +133,7 @@ func (r *RuntimeStore) RemoveActive(strmPath string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.active, strmPath)
+	delete(r.samples, strmPath)
 }
 
 func (r *RuntimeStore) AddDownloaded(p ProgressInfo) {
@@ -120,6 +150,7 @@ func (r *RuntimeStore) AddCompleted(res STRMProcessResult) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.active, res.Job.STRMPath)
+	delete(r.samples, res.Job.STRMPath)
 	r.completed = append([]STRMProcessResult{res}, r.completed...)
 	if len(r.completed) > r.maxHistory {
 		r.completed = r.completed[:r.maxHistory]
