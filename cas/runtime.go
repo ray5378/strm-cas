@@ -166,15 +166,16 @@ func (r *RuntimeStore) AddCompleted(res STRMProcessResult) {
 }
 
 type RuntimeSnapshot struct {
-	Running          bool           `json:"running"`
-	GracefulStopping bool           `json:"graceful_stopping"`
-	StartedAt        string         `json:"started_at,omitempty"`
-	EndedAt          string         `json:"ended_at,omitempty"`
-	Current          *ProgressInfo  `json:"current,omitempty"`
-	ActiveCount      int            `json:"active_count"`
-	ActiveItems      []ProgressInfo `json:"active_items,omitempty"`
-	DownloadedCount  int            `json:"downloaded_count"`
-	CompletedCount   int            `json:"completed_count"`
+	Running              bool           `json:"running"`
+	GracefulStopping     bool           `json:"graceful_stopping"`
+	StartedAt            string         `json:"started_at,omitempty"`
+	EndedAt              string         `json:"ended_at,omitempty"`
+	Current              *ProgressInfo  `json:"current,omitempty"`
+	ActiveCount          int            `json:"active_count"`
+	ActiveItems          []ProgressInfo `json:"active_items,omitempty"`
+	TotalSpeedBytesPerSec int64         `json:"total_speed_bytes_per_sec"`
+	DownloadedCount     int            `json:"downloaded_count"`
+	CompletedCount      int            `json:"completed_count"`
 }
 
 func (r *RuntimeStore) Snapshot() RuntimeSnapshot {
@@ -198,15 +199,16 @@ func (r *RuntimeStore) Snapshot() RuntimeSnapshot {
 		activeItems = activeItems[:8]
 	}
 	return RuntimeSnapshot{
-		Running:          r.running,
-		GracefulStopping: r.gracefulStopping,
-		StartedAt:        r.startedAt,
-		EndedAt:          r.endedAt,
-		Current:          cur,
-		ActiveCount:      len(r.active),
-		ActiveItems:      append([]ProgressInfo(nil), activeItems...),
-		DownloadedCount:  len(r.downloaded),
-		CompletedCount:   len(r.completed),
+		Running:               r.running,
+		GracefulStopping:      r.gracefulStopping,
+		StartedAt:             r.startedAt,
+		EndedAt:               r.endedAt,
+		Current:               cur,
+		ActiveCount:           len(r.active),
+		ActiveItems:           append([]ProgressInfo(nil), activeItems...),
+		TotalSpeedBytesPerSec: totalSpeed,
+		DownloadedCount:       len(r.downloaded),
+		CompletedCount:        len(r.completed),
 	}
 }
 
