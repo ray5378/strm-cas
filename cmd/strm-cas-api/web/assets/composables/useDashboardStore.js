@@ -85,7 +85,9 @@ export function useDashboardStore() {
   }
   async function scan() { return wrap(async () => { const res = await dashboardService.refreshScan(); await refreshAll(); return res }, 'scan') }
   async function start() { return wrap(async () => { const res = await dashboardService.startTasks({ mode: state.startMode, status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'start') }
+  async function startCurrentFilter() { return wrap(async () => { const res = await dashboardService.startTasks({ mode: 'current_filter', status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'start') }
   async function retryFailed() { return wrap(async () => { const res = await dashboardService.retryFailedTasks(); await refreshAll(); return res }, 'retryFailed') }
+  async function retrySelected() { return wrap(async () => { const res = await dashboardService.retrySelectedTasks({ status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'retryFailed') }
   async function retryOne(path) {
     state.loading.retryOne = path
     try {
@@ -102,5 +104,5 @@ export function useDashboardStore() {
   }
   async function clearDB() { return wrap(async () => { const res = await dashboardService.clearDB(); state.detail = null; state.confirmClear = false; await refreshAll(); return res }, 'clearDB') }
 
-  return { state, refreshOverview, refreshRecords, refreshDownloaded, refreshCompleted, refreshAll, loadDetail, scan, start, retryFailed, retryOne, clearDB }
+  return { state, refreshOverview, refreshRecords, refreshDownloaded, refreshCompleted, refreshAll, loadDetail, scan, start, startCurrentFilter, retryFailed, retrySelected, retryOne, clearDB }
 }

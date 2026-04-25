@@ -9,9 +9,10 @@ import { DownloadedPanel } from './DownloadedPanel.js'
 import { CompletedPanel } from './CompletedPanel.js'
 import { DetailPanel } from './DetailPanel.js'
 import { ToastStack } from './ToastStack.js'
+import { BatchActionsBar } from './BatchActionsBar.js'
 
 export const DashboardApp = {
-  components: { StatsCards, ActionToolbar, CurrentTaskCard, RecordsPanel, DownloadedPanel, CompletedPanel, DetailPanel, ToastStack },
+  components: { StatsCards, ActionToolbar, CurrentTaskCard, RecordsPanel, DownloadedPanel, CompletedPanel, DetailPanel, ToastStack, BatchActionsBar },
   setup() {
     const store = useDashboardStore()
     const toast = useToast()
@@ -96,6 +97,12 @@ export const DashboardApp = {
       <CurrentTaskCard class="section" :current="runtime.current || null" />
       <div class="main-grid section">
         <div>
+          <BatchActionsBar
+            :filters="store.state.filters"
+            :loading="store.state.loading"
+            @start-current-filter="runAction(() => store.startCurrentFilter(), '当前筛选任务已加入队列')"
+            @retry-current-filter="runAction(() => store.retrySelected(), '当前筛选下的失败任务已重新加入队列')"
+          />
           <RecordsPanel
             :records="store.state.records"
             :filters="store.state.filters"

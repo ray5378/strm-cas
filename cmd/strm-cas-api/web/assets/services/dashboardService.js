@@ -11,5 +11,6 @@ export const dashboardService = {
   startTasks: (payload) => postJSON('/api/tasks/start', payload || {}),
   retryTask: (path) => postJSON('/api/tasks/retry', { path }),
   retryFailedTasks: () => postJSON('/api/tasks/retry-failed'),
+  retrySelectedTasks: (payload) => postJSON('/api/tasks/retry-selected', payload || {}),
   clearDB: () => postJSON('/api/db/clear'),
 }

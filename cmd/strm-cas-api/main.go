@@ -30,9 +30,9 @@ type app struct {
 func main() {
 	listen := envOr("STRM_CAS_LISTEN", ":18457")
 	cfg := cas.STRMProcessOptions{
-		STRMRoot:        envOr("STRM_CAS_STRM_ROOT", "/strm"),
-		CacheDir:        envOr("STRM_CAS_CACHE_DIR", "/cache"),
-		DownloadDir:     envOr("STRM_CAS_DOWNLOAD_DIR", "/download"),
+		STRMRoot:        envOr("STRM_CAS_STRM_ROOT", "/data/strm"),
+		CacheDir:        envOr("STRM_CAS_CACHE_DIR", "/data/cache"),
+		DownloadDir:     envOr("STRM_CAS_DOWNLOAD_DIR", "/data/download"),
 		Mode:            cas.Mode189PC,
 		UserAgent:       envOr("STRM_CAS_USER_AGENT", "strm-cas-api/1.0"),
 		SkipExistingCAS: true,
@@ -68,6 +68,7 @@ func main() {
 	mux.HandleFunc("/api/tasks/start", app.handleTasksStart)
 	mux.HandleFunc("/api/tasks/retry", app.handleTaskRetry)
 	mux.HandleFunc("/api/tasks/retry-failed", app.handleRetryFailed)
+	mux.HandleFunc("/api/tasks/retry-selected", app.handleRetrySelected)
 	mux.HandleFunc("/api/db/clear", app.handleDBClear)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -83,12 +84,7 @@ func main() {
 }
 
 func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
-	jobs, err := a.currentJobs(true)
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	stats, err := cas.ComputeStats(a.db, jobs)
+	stats, err := cas.ComputeStatsFromDB(a.db)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -97,13 +93,8 @@ func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleRecords(w http.ResponseWriter, r *http.Request) {
-	jobs, err := a.currentJobs(true)
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
 	page, size := parsePage(r), parsePageSize(r)
-	result, err := cas.ListRecords(a.db, jobs, cas.QueryOptions{Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search"), Page: page, PageSize: size})
+	result, err := cas.ListStoredRecords(a.db, cas.QueryOptions{Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search"), Page: page, PageSize: size})
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -151,7 +142,7 @@ func (a *app) handleScanRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err, 500)
 		return
 	}
-	stats, err := cas.ComputeStats(a.db, jobs)
+	stats, err := cas.ComputeStatsFromDB(a.db)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -164,20 +155,43 @@ func (a *app) handleTasksStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("method not allowed"), 405)
 		return
 	}
-	jobs, err := a.currentJobs(true)
+	var req struct {
+		Mode   string `json:"mode"`
+		Status string `json:"status"`
+		Search string `json:"search"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	jobs, err := a.currentJobs(false)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
 	}
-	filtered := make([]cas.STRMJob, 0, len(jobs))
+	stored, err := cas.ListStoredRecordsAll(a.db, cas.QueryOptions{Status: req.Status, Search: req.Search})
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	byPath := make(map[string]cas.STRMJob, len(jobs))
 	for _, job := range jobs {
-		rec, _ := cas.GetRecord(a.db, job.STRMPath)
-		status := "pending"
-		if rec != nil && rec.Status != "" {
-			status = rec.Status
+		byPath[job.STRMPath] = job
+	}
+	filtered := make([]cas.STRMJob, 0)
+	for _, rec := range stored {
+		job, ok := byPath[rec.STRMPath]
+		if !ok {
+			continue
 		}
-		if status == "pending" || status == "failed" {
+		switch req.Mode {
+		case "failed":
+			if rec.Status == "failed" {
+				filtered = append(filtered, job)
+			}
+		case "current_filter":
 			filtered = append(filtered, job)
+		default:
+			if rec.Status == "pending" {
+				filtered = append(filtered, job)
+			}
 		}
 	}
 	if len(filtered) == 0 {
@@ -203,7 +217,7 @@ func (a *app) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("missing path"), 400)
 		return
 	}
-	jobs, err := a.currentJobs(true)
+	jobs, err := a.currentJobs(false)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -247,6 +261,50 @@ func (a *app) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 	}
 	filtered := make([]cas.STRMJob, 0)
 	for _, rec := range stored {
+		if job, ok := byPath[rec.STRMPath]; ok {
+			filtered = append(filtered, job)
+		}
+	}
+	if len(filtered) == 0 {
+		writeJSON(w, map[string]any{"ok": true, "started": 0})
+		return
+	}
+	if err := a.startJobs(filtered); err != nil {
+		writeErr(w, err, 409)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "started": len(filtered)})
+}
+
+func (a *app) handleRetrySelected(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+		Search string `json:"search"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	jobs, err := a.currentJobs(false)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	stored, err := cas.ListStoredRecordsAll(a.db, cas.QueryOptions{Status: req.Status, Search: req.Search})
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	byPath := make(map[string]cas.STRMJob, len(jobs))
+	for _, job := range jobs {
+		byPath[job.STRMPath] = job
+	}
+	filtered := make([]cas.STRMJob, 0)
+	for _, rec := range stored {
+		if rec.Status != "failed" {
+			continue
+		}
 		if job, ok := byPath[rec.STRMPath]; ok {
 			filtered = append(filtered, job)
 		}
