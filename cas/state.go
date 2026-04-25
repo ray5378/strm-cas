@@ -30,6 +30,7 @@ type Stats struct {
 	Done        int `json:"done"`
 	Skipped     int `json:"skipped"`
 	Failed      int `json:"failed"`
+	Exception   int `json:"exception"`
 	Pending     int `json:"pending"`
 	Processed   int `json:"processed"`
 	Unprocessed int `json:"unprocessed"`
@@ -158,6 +159,8 @@ func ComputeStats(db *bolt.DB, jobs []STRMJob) (Stats, error) {
 				stats.Skipped++
 			case "failed":
 				stats.Failed++
+			case "exception":
+				stats.Exception++
 			default:
 				stats.Pending++
 			}

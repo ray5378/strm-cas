@@ -158,6 +158,7 @@ http://127.0.0.1:18457/
 - 展示还没处理数量
 - 展示已生成 `.cas` 数量
 - 展示失败数量
+- 展示异常数量
 - 展示跳过数量
 - 支持状态筛选
 - 支持搜索
@@ -190,7 +191,7 @@ GET /api/overview
 ### 数据库记录分页 + 筛选
 
 ```http
-GET /api/records?status=failed&search=test&page=1&page_size=10
+GET /api/records?status=exception&search=test&page=1&page_size=10
 ```
 
 ### 单条详情
@@ -264,3 +265,4 @@ POST /api/db/clear
 - `<= 10 MiB * 999`：分片大小 `10 MiB`
 - `> 10 MiB * 999 && <= 10 MiB * 2 * 999`：分片大小 `20 MiB`
 - 更大文件：按最多约 `1999` 片倒推，且最小 `50 MiB`
+
