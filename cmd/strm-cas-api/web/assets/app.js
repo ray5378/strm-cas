@@ -1,6 +1,6 @@
 import { createApp } from './vue.js'
 import { createStore } from './store.js'
-import { statsCards, pager, statusBadge } from './components.js'
+import { statsCards, pager, statusBadge, stageText } from './components.js'
 import { api } from './api.js'
 
 const store = createStore()
@@ -27,7 +27,7 @@ const root = {
           ${confirmClear ? `<div class="section" style="color:#991b1b"><strong>二级确认：</strong>清理数据库会删除当前所有处理状态记录，但不会删除 /strm、/download 里的文件。</div>` : ''}
           <div class="section">
             <div><strong>当前任务</strong></div>
-            ${current ? `<div class="mono">${current.job?.strm_path || ''}</div><div class="row"><span>${current.stage}</span><span>${current.file_name || ''}</span><span>${current.downloaded_bytes || 0}${current.total_bytes ? ' / ' + current.total_bytes : ''}</span></div><div class="muted">${current.message || ''}</div>` : '<div class="muted">暂无</div>'}
+            ${current ? `<div class="mono">${current.job?.strm_path || ''}</div><div class="row"><span>${stageText(current.stage)}</span><span>${current.file_name || ''}</span><span>${current.downloaded_bytes || 0}${current.total_bytes ? ' / ' + current.total_bytes : ''}</span></div><div class="muted">${current.message || ''}</div>` : '<div class="muted">暂无</div>'}
           </div>
         </div>
         <div class="main-grid section">
@@ -35,7 +35,7 @@ const root = {
             <div class="card">
               <div class="toolbar">
                 <strong>数据库记录</strong>
-                <select id="status"><option value="">全部</option><option value="pending">pending</option><option value="done">done</option><option value="failed">failed</option><option value="exception">exception</option><option value="skipped">skipped</option></select>
+                <select id="status"><option value="">全部</option><option value="pending">未处理</option><option value="done">已完成</option><option value="failed">失败</option><option value="exception">异常</option><option value="skipped">已跳过</option></select>
                 <input id="search" placeholder="搜索路径 / URL / 错误" value="${escapeHtml(store.filters.search)}" />
                 <button data-act="apply-filters">筛选</button>
               </div>
@@ -47,12 +47,12 @@ const root = {
             <div class="card section">
               <strong>已下载任务</strong>
               <table><thead><tr><th>阶段</th><th>文件</th><th>下载路径</th><th>更新时间</th></tr></thead><tbody>
-                ${(store.downloaded.items || []).map(it => `<tr><td>${escapeHtml(it.stage)}</td><td>${escapeHtml(it.file_name || '')}</td><td class="mono">${escapeHtml(it.download_path || '')}</td><td>${escapeHtml(it.updated_at || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">无数据</td></tr>'}
+                ${(store.downloaded.items || []).map(it => `<tr><td>${escapeHtml(stageText(it.stage))}</td><td>${escapeHtml(it.file_name || '')}</td><td class="mono">${escapeHtml(it.download_path || '')}</td><td>${escapeHtml(it.updated_at || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">无数据</td></tr>'}
               </tbody></table>
               ${pager(store.downloaded.total, store.downloadedPage, 10, 'downloaded')}
             </div>
             <div class="card section">
-              <div class="toolbar"><strong>已完成任务</strong><select id="completedStatus"><option value="">全部</option><option value="done">done</option><option value="failed">failed</option><option value="skipped">skipped</option></select><button data-act="apply-completed">筛选</button></div>
+              <div class="toolbar"><strong>已完成任务</strong><select id="completedStatus"><option value="">全部</option><option value="done">已完成</option><option value="failed">失败</option><option value="exception">异常</option><option value="skipped">已跳过</option></select><button data-act="apply-completed">筛选</button></div>
               <table><thead><tr><th>状态</th><th>strm</th><th>cas</th><th>消息</th></tr></thead><tbody>
                 ${(store.completed.items || []).map(it => `<tr><td>${statusBadge(it.status)}</td><td class="mono">${escapeHtml(it.job?.strm_path || '')}</td><td class="mono">${escapeHtml(it.cas_path || '')}</td><td>${escapeHtml(it.message || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">无数据</td></tr>'}
               </tbody></table>

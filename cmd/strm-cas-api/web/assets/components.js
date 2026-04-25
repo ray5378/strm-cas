@@ -1,3 +1,11 @@
+const STATUS_TEXT = {
+  pending: '未处理',
+  done: '已完成',
+  failed: '失败',
+  exception: '异常',
+  skipped: '已跳过',
+}
+
 export function statsCards(stats = {}) {
   const items = [
     ['总 .strm', stats.total || 0],
@@ -15,6 +23,22 @@ export function pager(total, page, pageSize, prefix) {
   return `<div class="row"><button data-act="${prefix}:prev" ${page<=1?'disabled':''}>上一页</button><span class="muted">第 ${page} / ${pages} 页，共 ${total} 条</span><button data-act="${prefix}:next" ${page>=pages?'disabled':''}>下一页</button></div>`
 }
 
+export function statusText(status='') {
+  return STATUS_TEXT[status] || status || '未处理'
+}
+
 export function statusBadge(status='') {
-  return `<span class="badge ${status || 'pending'}">${status || 'pending'}</span>`
+  return `<span class="badge ${status || 'pending'}">${statusText(status)}</span>`
+}
+
+const STAGE_TEXT = {
+  queued: '排队中',
+  downloading: '下载中',
+  downloaded: '已下载',
+  generating_cas: '生成 CAS',
+  completed: '已完成',
+}
+
+export function stageText(stage='') {
+  return STAGE_TEXT[stage] || stage || '-'
 }
