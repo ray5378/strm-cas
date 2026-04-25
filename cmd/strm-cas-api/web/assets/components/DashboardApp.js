@@ -31,6 +31,10 @@ export const DashboardApp = {
         toast.success(`${fallback}：请求 ${requested} 项，匹配 ${matched} 项，加入 ${res.started} 项，跳过 ${skipped} 项`)
         return
       }
+      if (res && typeof res.stopped === 'boolean') {
+        toast.success(res.stopped ? '当前任务已发出停止请求' : '当前没有运行中的任务')
+        return
+      }
       toast.success(fallback)
     }
 
@@ -76,6 +80,10 @@ export const DashboardApp = {
       }
     }
 
+    const updateSettingsField = ({ key, value }) => {
+      store.state.settings = { ...store.state.settings, [key]: value }
+    }
+
     const scheduleRefresh = () => {
       if (timer) clearTimeout(timer)
       if (!store.state.autoRefreshEnabled) return
@@ -101,6 +109,7 @@ export const DashboardApp = {
     const confirmBatchRetrySelected = () => openConfirm('重试选中失败项', `即将重试 ${store.state.selectedPaths.length} 个选中项中的失败任务，是否继续？`, () => runAction(() => store.retrySelected(), res => toastResult(res, '选中失败任务已重新加入队列')), '开始重试')
     const confirmBatchStartFilter = () => openConfirm('按当前筛选开始任务', '将按当前筛选条件批量启动任务，是否继续？', () => runAction(() => store.startCurrentFilter(), res => toastResult(res, '当前筛选任务已加入队列')), '开始任务')
     const confirmBatchRetryFilter = () => openConfirm('按当前筛选重试失败', '将按当前筛选条件批量重试失败任务，是否继续？', () => runAction(() => store.retryByFilter(), res => toastResult(res, '当前筛选下的失败任务已重新加入队列')), '开始重试')
+    const confirmStopTasks = () => openConfirm('停止当前任务', '将停止当前正在运行的批次任务，是否继续？', () => runAction(() => store.stopTasks(), res => toastResult(res, '停止请求已发出')), '停止任务')
 
     onMounted(async () => {
       store.state.loading.initial = true
@@ -116,7 +125,7 @@ export const DashboardApp = {
       if (timer) clearTimeout(timer)
     })
 
-    return { store, runtime, stats, toast, runAction, autoRefreshLabel, toggleAutoRefresh, confirmState, openConfirm, closeConfirm, confirmAndRun, copyText, confirmBatchStartSelected, confirmBatchRetrySelected, confirmBatchStartFilter, confirmBatchRetryFilter }
+    return { store, runtime, stats, toast, runAction, autoRefreshLabel, toggleAutoRefresh, confirmState, openConfirm, closeConfirm, confirmAndRun, copyText, updateSettingsField, confirmBatchStartSelected, confirmBatchRetrySelected, confirmBatchStartFilter, confirmBatchRetryFilter, confirmStopTasks }
   },
   template: `
     <div class="layout">
@@ -126,7 +135,7 @@ export const DashboardApp = {
         :title="confirmState.title"
         :message="confirmState.message"
         :confirm-text="confirmState.confirmText"
-        :loading="store.state.loading.start || store.state.loading.retryFailed"
+        :loading="store.state.loading.start || store.state.loading.retryFailed || store.state.loading.stop"
         @confirm="confirmAndRun"
         @cancel="closeConfirm"
       />
@@ -138,19 +147,19 @@ export const DashboardApp = {
       <ActionToolbar
         :running="!!runtime.running"
         :runtime="runtime"
-        :settings="store.state.settings"
         :start-mode="store.state.startMode"
         :confirm-clear="store.state.confirmClear"
         :loading="store.state.loading"
         :auto-refresh-enabled="store.state.autoRefreshEnabled"
         :auto-refresh-label="autoRefreshLabel"
+        :settings="store.state.settings"
         @scan="runAction(() => store.scan(), '扫描完成')"
         @start="runAction(() => store.start(), res => toastResult(res, '任务已启动'))"
-        @stop="runAction(() => store.stopTasks(), '已发送停止请求')"
-        @save-settings="runAction(() => store.saveSettings(), '设置已保存')"
-        @update-settings="(payload) => { store.state.settings[payload.key] = payload.value }"
+        @stop="confirmStopTasks"
         @retry-failed="runAction(() => store.retryFailed(), res => toastResult(res, '失败任务已重新加入队列'))"
         @refresh="runAction(() => store.refreshAll(), '已刷新')"
+        @save-settings="runAction(() => store.saveSettings(), '设置已保存，将作用于后续启动的任务')"
+        @update-settings="updateSettingsField"
         @toggle-auto-refresh="toggleAutoRefresh"
         @set-mode="store.state.startMode = $event"
         @clear-step1="store.state.confirmClear = true"

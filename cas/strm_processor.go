@@ -78,8 +78,9 @@ func ProcessSTRMTree(opts STRMProcessOptions) (*STRMProcessSummary, error) {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = 1
 	}
-	if opts.Context == nil {
-		opts.Context = context.Background()
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	startedAt := time.Now()
 	jobs, err := DiscoverSTRMJobs(opts.STRMRoot)
@@ -99,56 +100,52 @@ func ProcessSTRMTree(opts STRMProcessOptions) (*STRMProcessSummary, error) {
 	client := &http.Client{Timeout: opts.HTTPTimeout}
 	limiter := newRateLimiter(opts.TotalRateLimit)
 	summary := &STRMProcessSummary{StartedAt: startedAt.Format(time.RFC3339), Results: make([]STRMProcessResult, 0, len(jobs))}
+	var mu sync.Mutex
 	jobCh := make(chan STRMJob)
-	resultCh := make(chan STRMProcessResult, len(jobs))
-	var wg sync.WaitGroup
-	workerCount := opts.Concurrency
-	if workerCount > len(jobs) && len(jobs) > 0 {
-		workerCount = len(jobs)
+	wg := sync.WaitGroup{}
+	workers := opts.Concurrency
+	if workers < 1 {
+		workers = 1
 	}
-	if workerCount <= 0 {
-		workerCount = 1
-	}
-	for i := 0; i < workerCount; i++ {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for job := range jobCh {
-				res, err := ProcessSingleSTRMWithContext(opts.Context, client, limiter, opts, job)
+				res, err := ProcessSingleSTRMWithContext(ctx, client, limiter, opts, job)
+				mu.Lock()
 				if err != nil {
 					status := "failed"
 					if job.ParseError != "" {
 						status = "exception"
 					}
-					resultCh <- STRMProcessResult{Job: job, Status: status, Message: err.Error()}
+					failed := STRMProcessResult{Job: job, Status: status, Message: err.Error()}
+					summary.Results = append(summary.Results, failed)
+					if db != nil {
+						_ = UpdateResult(db, failed)
+					}
+					mu.Unlock()
 					continue
 				}
 				if res != nil {
-					resultCh <- *res
+					summary.Results = append(summary.Results, *res)
+					if db != nil {
+						_ = UpdateResult(db, *res)
+					}
 				}
+				mu.Unlock()
 			}
 		}()
 	}
-	go func() {
-		defer close(jobCh)
-		for _, job := range jobs {
-			select {
-			case <-opts.Context.Done():
-				return
-			case jobCh <- job:
-			}
-		}
-	}()
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-	for res := range resultCh {
-		summary.Results = append(summary.Results, res)
-		if db != nil {
-			_ = UpdateResult(db, res)
+	for _, job := range jobs {
+		select {
+		case <-ctx.Done():
+			break
+		case jobCh <- job:
 		}
 	}
+	close(jobCh)
+	wg.Wait()
 	summary.EndedAt = time.Now().Format(time.RFC3339)
 	if opts.LogPath != "" {
 		if err := writeSummaryLog(opts.LogPath, summary); err != nil {
