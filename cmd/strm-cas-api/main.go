@@ -223,17 +223,12 @@ func (a *app) handleDBReconcile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("task is running, cannot reconcile database"), 409)
 		return
 	}
-	summary, err := cas.ReconcileStateWithFS(a.db, a.cfg.STRMRoot, a.cfg.DownloadDir)
+	summary, err := cas.ReconcileState(a.db, a.cfg.STRMRoot, a.cfg.DownloadDir)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
 	}
-	stats, err := cas.ComputeStatsFromDB(a.db)
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "summary": summary, "stats": stats})
+	writeJSON(w, summary)
 }
 
 func writeStartSummary(w http.ResponseWriter, requested, matched, started int) {
