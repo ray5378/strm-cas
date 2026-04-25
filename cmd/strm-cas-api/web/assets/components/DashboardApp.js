@@ -242,12 +242,3 @@ export const DashboardApp = {
     </div>
   `,
 }
-lected="store.toggleSelected($event)"
-            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
-            @copy="copyText"
-          />
-        </div>
-      </div>
-    </div>
-  `,
-}
