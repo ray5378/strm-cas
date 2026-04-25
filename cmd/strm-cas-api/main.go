@@ -628,14 +628,31 @@ func (a *app) startJobs(jobs []cas.STRMJob) error {
 				}
 			}()
 		}
+		stopDispatch := false
 		for _, job := range selected {
-			select {
-			case <-ctx.Done():
-				close(jobCh)
-				wg.Wait()
-				return
-			case jobCh <- job:
+			if a.isGracefulStop() {
+				stopDispatch = true
+				break
 			}
+			for {
+				if a.isGracefulStop() {
+					stopDispatch = true
+					break
+				}
+				select {
+				case <-ctx.Done():
+					close(jobCh)
+					wg.Wait()
+					return
+				case jobCh <- job:
+					goto nextJob
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+			if stopDispatch {
+				break
+			}
+		nextJob:
 		}
 		close(jobCh)
 		wg.Wait()
