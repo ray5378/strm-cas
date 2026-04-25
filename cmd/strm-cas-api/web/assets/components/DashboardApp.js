@@ -35,6 +35,10 @@ export const DashboardApp = {
         toast.success(res.stopped ? '当前任务已发出停止请求' : '当前没有运行中的任务')
         return
       }
+      if (res && typeof res.total_strm === 'number') {
+        toast.success(`数据库纠正完成：STRM ${res.total_strm}，发现 CAS ${res.cas_found}，标记完成 ${res.marked_done}，改回待处理 ${res.marked_pending}，异常 ${res.marked_exception}，删除过期记录 ${res.removed_stale}`)
+        return
+      }
       toast.success(fallback)
     }
 
@@ -154,6 +158,7 @@ export const DashboardApp = {
         :auto-refresh-label="autoRefreshLabel"
         :settings="store.state.settings"
         @scan="runAction(() => store.scan(), '扫描完成')"
+        @reconcile-db="runAction(() => store.reconcileDB(), res => toastResult(res, '数据库已纠正'))"
         @start="runAction(() => store.start(), res => toastResult(res, '任务已启动'))"
         @stop="confirmStopTasks"
         @retry-failed="runAction(() => store.retryFailed(), res => toastResult(res, '失败任务已重新加入队列'))"
@@ -225,6 +230,15 @@ export const DashboardApp = {
             :selected-paths="store.state.selectedPaths"
             :loading="store.state.loading"
             @toggle-selected="store.toggleSelected($event)"
+            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
+            @copy="copyText"
+          />
+        </div>
+      </div>
+    </div>
+  `,
+}
+gleSelected($event)"
             @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
             @copy="copyText"
           />

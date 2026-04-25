@@ -12,12 +12,13 @@ export const ActionToolbar = {
     autoRefreshLabel: { type: String, default: '空闲 15s / 运行中 3s' },
     settings: { type: Object, default: () => ({ concurrency: 2, total_rate_limit_mb: 0 }) },
   },
-  emits: ['scan', 'start', 'stop', 'retry-failed', 'refresh', 'save-settings', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel', 'toggle-auto-refresh', 'update-settings'],
+  emits: ['scan', 'reconcile-db', 'start', 'stop', 'retry-failed', 'refresh', 'save-settings', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel', 'toggle-auto-refresh', 'update-settings'],
   template: `
     <div class="section card">
       <div class="toolbar">
         <button @click="$emit('scan')" :disabled="running || loading.scan" :class="{ 'is-loading': loading.scan }">{{ loading.scan ? '扫描中...' : '扫描 /strm' }}</button>
-        <span class="muted">扫描只更新数据库记录，不执行下载</span>
+        <button @click="$emit('reconcile-db')" :disabled="running || loading.reconcileDB" :class="{ 'is-loading': loading.reconcileDB }">{{ loading.reconcileDB ? '纠正中...' : '纠正数据库' }}</button>
+        <span class="muted">扫描只更新数据库记录；纠正数据库会以当前 .strm 和实际存在的 .cas 为准修正状态</span>
       </div>
       <div class="toolbar section">
         <strong>运行设置：</strong>

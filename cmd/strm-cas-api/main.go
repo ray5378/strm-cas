@@ -86,6 +86,7 @@ func main() {
 	mux.HandleFunc("/api/runtime/downloaded", app.handleRuntimeDownloaded)
 	mux.HandleFunc("/api/runtime/completed", app.handleRuntimeCompleted)
 	mux.HandleFunc("/api/scan/refresh", app.handleScanRefresh)
+	mux.HandleFunc("/api/db/reconcile", app.handleDBReconcile)
 	mux.HandleFunc("/api/tasks/start", app.handleTasksStart)
 	mux.HandleFunc("/api/tasks/start-selected", app.handleStartSelected)
 	mux.HandleFunc("/api/tasks/stop", app.handleTasksStop)
@@ -211,6 +212,28 @@ func (a *app) handleScanRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "stats": stats, "total": len(jobs)})
+}
+
+func (a *app) handleDBReconcile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	if a.runtime.Snapshot().Running {
+		writeErr(w, fmt.Errorf("task is running, cannot reconcile database"), 409)
+		return
+	}
+	summary, err := cas.ReconcileStateWithFS(a.db, a.cfg.STRMRoot, a.cfg.DownloadDir)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	stats, err := cas.ComputeStatsFromDB(a.db)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "summary": summary, "stats": stats})
 }
 
 func writeStartSummary(w http.ResponseWriter, requested, matched, started int) {
