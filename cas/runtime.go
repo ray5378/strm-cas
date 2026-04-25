@@ -105,7 +105,7 @@ func (r *RuntimeStore) SetCurrent(p ProgressInfo) {
 		if prev, ok := r.samples[p.Job.STRMPath]; ok {
 			deltaBytes := p.DownloadedBytes - prev.DownloadedBytes
 			deltaTime := now.Sub(prev.At).Seconds()
-			if deltaBytes > 0 && deltaTime > 0.2 {
+			if deltaBytes > 0 && deltaTime >= 0.5 {
 				speed := int64(float64(deltaBytes) / deltaTime)
 				if speed > 0 {
 					p.SpeedBytesPerSec = speed
@@ -114,9 +114,17 @@ func (r *RuntimeStore) SetCurrent(p ProgressInfo) {
 						p.ETASeconds = remaining / speed
 					}
 				}
+				r.samples[p.Job.STRMPath] = progressSample{DownloadedBytes: p.DownloadedBytes, At: now}
+			} else {
+				p.SpeedBytesPerSec = 0
+				if existing, ok := r.active[p.Job.STRMPath]; ok {
+					p.SpeedBytesPerSec = existing.SpeedBytesPerSec
+					p.ETASeconds = existing.ETASeconds
+				}
 			}
+		} else {
+			r.samples[p.Job.STRMPath] = progressSample{DownloadedBytes: p.DownloadedBytes, At: now}
 		}
-		r.samples[p.Job.STRMPath] = progressSample{DownloadedBytes: p.DownloadedBytes, At: now}
 	}
 	p.UpdatedAt = now.Format(time.RFC3339)
 	cp := p
