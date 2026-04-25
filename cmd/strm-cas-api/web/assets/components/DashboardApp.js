@@ -138,6 +138,7 @@ export const DashboardApp = {
       <ActionToolbar
         :running="!!runtime.running"
         :runtime="runtime"
+        :settings="store.state.settings"
         :start-mode="store.state.startMode"
         :confirm-clear="store.state.confirmClear"
         :loading="store.state.loading"
@@ -145,6 +146,9 @@ export const DashboardApp = {
         :auto-refresh-label="autoRefreshLabel"
         @scan="runAction(() => store.scan(), '扫描完成')"
         @start="runAction(() => store.start(), res => toastResult(res, '任务已启动'))"
+        @stop="runAction(() => store.stopTasks(), '已发送停止请求')"
+        @save-settings="runAction(() => store.saveSettings(), '设置已保存')"
+        @update-settings="(payload) => { store.state.settings[payload.key] = payload.value }"
         @retry-failed="runAction(() => store.retryFailed(), res => toastResult(res, '失败任务已重新加入队列'))"
         @refresh="runAction(() => store.refreshAll(), '已刷新')"
         @toggle-auto-refresh="toggleAutoRefresh"

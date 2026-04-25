@@ -1,6 +1,7 @@
 package cas
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +37,9 @@ type STRMProcessOptions struct {
 	SkipExistingCAS bool
 	LogPath         string
 	DBPath          string
+	Concurrency     int
+	TotalRateLimit  int64
+	Context         context.Context
 	OnProgress      func(ProgressInfo)
 	OnResult        func(STRMProcessResult)
 }
@@ -70,6 +75,12 @@ func ProcessSTRMTree(opts STRMProcessOptions) (*STRMProcessSummary, error) {
 	if opts.HTTPTimeout <= 0 {
 		opts.HTTPTimeout = 0
 	}
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = 1
+	}
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
 	startedAt := time.Now()
 	jobs, err := DiscoverSTRMJobs(opts.STRMRoot)
 	if err != nil {
@@ -86,24 +97,56 @@ func ProcessSTRMTree(opts STRMProcessOptions) (*STRMProcessSummary, error) {
 		}
 	}
 	client := &http.Client{Timeout: opts.HTTPTimeout}
+	limiter := newRateLimiter(opts.TotalRateLimit)
 	summary := &STRMProcessSummary{StartedAt: startedAt.Format(time.RFC3339), Results: make([]STRMProcessResult, 0, len(jobs))}
-	for _, job := range jobs {
-		res, err := ProcessSingleSTRM(client, opts, job)
-		if err != nil {
-			status := "failed"
-			if job.ParseError != "" {
-				status = "exception"
+	jobCh := make(chan STRMJob)
+	resultCh := make(chan STRMProcessResult, len(jobs))
+	var wg sync.WaitGroup
+	workerCount := opts.Concurrency
+	if workerCount > len(jobs) && len(jobs) > 0 {
+		workerCount = len(jobs)
+	}
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobCh {
+				res, err := ProcessSingleSTRMWithContext(opts.Context, client, limiter, opts, job)
+				if err != nil {
+					status := "failed"
+					if job.ParseError != "" {
+						status = "exception"
+					}
+					resultCh <- STRMProcessResult{Job: job, Status: status, Message: err.Error()}
+					continue
+				}
+				if res != nil {
+					resultCh <- *res
+				}
 			}
-			failed := STRMProcessResult{Job: job, Status: status, Message: err.Error()}
-			summary.Results = append(summary.Results, failed)
-			if db != nil {
-				_ = UpdateResult(db, failed)
+		}()
+	}
+	go func() {
+		defer close(jobCh)
+		for _, job := range jobs {
+			select {
+			case <-opts.Context.Done():
+				return
+			case jobCh <- job:
 			}
-			continue
 		}
-		summary.Results = append(summary.Results, *res)
+	}()
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+	for res := range resultCh {
+		summary.Results = append(summary.Results, res)
 		if db != nil {
-			_ = UpdateResult(db, *res)
+			_ = UpdateResult(db, res)
 		}
 	}
 	summary.EndedAt = time.Now().Format(time.RFC3339)
@@ -180,6 +223,13 @@ func ExtractSTRMLink(body []byte) (string, error) {
 }
 
 func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob) (*STRMProcessResult, error) {
+	return ProcessSingleSTRMWithContext(opts.Context, client, newRateLimiter(opts.TotalRateLimit), opts, job)
+}
+
+func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limiter *rateLimiter, opts STRMProcessOptions, job STRMJob) (*STRMProcessResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if job.ParseError != "" {
 		return nil, fmt.Errorf(job.ParseError)
 	}
@@ -231,7 +281,7 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 		return res, nil
 	}
 
-	req, err := http.NewRequest(http.MethodGet, job.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, job.URL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +336,7 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 	if err != nil {
 		return nil, err
 	}
-	cr := &countingReader{reader: resp.Body, onRead: func(n int64) {
+	cr := &countingReader{ctx: ctx, reader: resp.Body, limiter: limiter, onRead: func(n int64) {
 		progress(ProgressInfo{Job: job, Stage: "downloading", FileName: name, DownloadPath: finalPath, DownloadedBytes: partialSize + n, TotalBytes: contentTotal(resp.ContentLength, partialSize), Message: "downloading"})
 	}}
 	written, copyErr := io.Copy(f, cr)
