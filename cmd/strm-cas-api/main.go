@@ -23,6 +23,7 @@ var webFS embed.FS
 type app struct {
 	cfg     cas.STRMProcessOptions
 	runtime *cas.RuntimeStore
+	db      *bolt.DB
 	mu      sync.Mutex
 }
 
