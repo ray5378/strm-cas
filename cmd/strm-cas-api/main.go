@@ -17,7 +17,7 @@ import (
 	"strm-cas/cas"
 )
 
-//go:embed web/* web/assets/*
+//go:embed all:web
 var webFS embed.FS
 
 type app struct {
