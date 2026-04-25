@@ -150,6 +150,16 @@ func (a *app) handleScanRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "stats": stats, "total": len(jobs)})
 }
 
+func writeStartSummary(w http.ResponseWriter, requested, matched, started int) {
+	writeJSON(w, map[string]any{
+		"ok":        true,
+		"requested": requested,
+		"matched":   matched,
+		"started":   started,
+		"skipped":   requested - started,
+	})
+}
+
 func (a *app) handleTasksStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, fmt.Errorf("method not allowed"), 405)
@@ -194,15 +204,17 @@ func (a *app) handleTasksStart(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if len(filtered) == 0 {
-		writeJSON(w, map[string]any{"ok": true, "started": 0})
+	requested := len(stored)
+	matched := len(filtered)
+	if matched == 0 {
+		writeStartSummary(w, requested, matched, 0)
 		return
 	}
 	if err := a.startJobs(filtered); err != nil {
 		writeErr(w, err, 409)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "started": len(filtered)})
+	writeStartSummary(w, requested, matched, matched)
 }
 
 func (a *app) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
@@ -265,15 +277,17 @@ func (a *app) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, job)
 		}
 	}
-	if len(filtered) == 0 {
-		writeJSON(w, map[string]any{"ok": true, "started": 0})
+	requested := len(stored)
+	matched := len(filtered)
+	if matched == 0 {
+		writeStartSummary(w, requested, matched, 0)
 		return
 	}
 	if err := a.startJobs(filtered); err != nil {
 		writeErr(w, err, 409)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "started": len(filtered)})
+	writeStartSummary(w, requested, matched, matched)
 }
 
 func (a *app) handleRetrySelected(w http.ResponseWriter, r *http.Request) {
@@ -282,8 +296,9 @@ func (a *app) handleRetrySelected(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Status string `json:"status"`
-		Search string `json:"search"`
+		Status string   `json:"status"`
+		Search string   `json:"search"`
+		Paths  []string `json:"paths"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	jobs, err := a.currentJobs(false)
@@ -291,33 +306,40 @@ func (a *app) handleRetrySelected(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err, 500)
 		return
 	}
-	stored, err := cas.ListStoredRecordsAll(a.db, cas.QueryOptions{Status: req.Status, Search: req.Search})
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	byPath := make(map[string]cas.STRMJob, len(jobs))
-	for _, job := range jobs {
-		byPath[job.STRMPath] = job
-	}
+	requested := len(req.Paths)
 	filtered := make([]cas.STRMJob, 0)
-	for _, rec := range stored {
-		if rec.Status != "failed" {
-			continue
+	if len(req.Paths) > 0 {
+		filtered = a.matchJobsByPaths(jobs, req.Paths, true)
+	} else {
+		stored, err := cas.ListStoredRecordsAll(a.db, cas.QueryOptions{Status: req.Status, Search: req.Search})
+		if err != nil {
+			writeErr(w, err, 500)
+			return
 		}
-		if job, ok := byPath[rec.STRMPath]; ok {
-			filtered = append(filtered, job)
+		requested = len(stored)
+		byPath := make(map[string]cas.STRMJob, len(jobs))
+		for _, job := range jobs {
+			byPath[job.STRMPath] = job
+		}
+		for _, rec := range stored {
+			if rec.Status != "failed" {
+				continue
+			}
+			if job, ok := byPath[rec.STRMPath]; ok {
+				filtered = append(filtered, job)
+			}
 		}
 	}
-	if len(filtered) == 0 {
-		writeJSON(w, map[string]any{"ok": true, "started": 0})
+	matched := len(filtered)
+	if matched == 0 {
+		writeStartSummary(w, requested, matched, 0)
 		return
 	}
 	if err := a.startJobs(filtered); err != nil {
 		writeErr(w, err, 409)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "started": len(filtered)})
+	writeStartSummary(w, requested, matched, matched)
 }
 
 func (a *app) handleDBClear(w http.ResponseWriter, r *http.Request) {

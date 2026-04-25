@@ -25,7 +25,10 @@ export const DashboardApp = {
 
     const toastResult = (res, fallback) => {
       if (res && typeof res.started === 'number') {
-        toast.success(`${fallback}：已加入 ${res.started} 项`)
+        const requested = typeof res.requested === 'number' ? res.requested : res.started
+        const matched = typeof res.matched === 'number' ? res.matched : res.started
+        const skipped = typeof res.skipped === 'number' ? res.skipped : Math.max(0, requested - res.started)
+        toast.success(`${fallback}：请求 ${requested} 项，匹配 ${matched} 项，加入 ${res.started} 项，跳过 ${skipped} 项`)
         return
       }
       toast.success(fallback)
@@ -184,6 +187,7 @@ export const DashboardApp = {
             :page="store.state.downloadedPage"
             :loading="store.state.loading.downloaded"
             :error-message="store.state.errors.downloaded"
+            @detail="(path) => runAction(() => store.loadDetail(path))"
             @page-prev="() => { if (store.state.downloadedPage > 1) { store.state.downloadedPage--; runAction(() => store.refreshDownloaded()) } }"
             @page-next="() => { store.state.downloadedPage++; runAction(() => store.refreshDownloaded()) }"
             @page-jump="(v) => { store.state.downloadedPage = v; runAction(() => store.refreshDownloaded()) }"

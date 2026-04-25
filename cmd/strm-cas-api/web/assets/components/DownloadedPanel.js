@@ -10,7 +10,7 @@ export const DownloadedPanel = {
     loading: { type: Boolean, default: false },
     errorMessage: { type: String, default: '' },
   },
-  emits: ['page-prev', 'page-next', 'page-jump'],
+  emits: ['page-prev', 'page-next', 'page-jump', 'detail'],
   methods: { stageText },
   template: `
     <DataTableCard
@@ -34,7 +34,7 @@ export const DownloadedPanel = {
         <EmptyState v-if="!(downloaded.items || []).length" :colspan="4" title="暂无已下载任务" message="有下载进度后，这里会显示最近的下载记录。" />
         <tr v-for="item in (downloaded.items || [])" :key="item.download_path + item.updated_at">
           <td>{{ stageText(item.stage) }}</td>
-          <td>{{ item.file_name || '' }}</td>
+          <td><button class="link-button" @click="$emit('detail', item.job?.strm_path || '')">{{ item.file_name || '' }}</button></td>
           <td class="mono">{{ item.download_path || '' }}</td>
           <td>{{ item.updated_at || '' }}</td>
         </tr>
