@@ -92,6 +92,11 @@ func UpsertDiscoveredJob(db *bolt.DB, job STRMJob) error {
 		rec.URL = job.URL
 		rec.RelativeDir = job.RelativeDir
 		rec.LastSeenAt = now
+		if job.ParseError != "" {
+			rec.Status = "failed"
+			rec.LastMessage = job.ParseError
+			rec.LastProcessedAt = now
+		}
 		body, err := json.Marshal(rec)
 		if err != nil {
 			return err

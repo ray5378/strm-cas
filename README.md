@@ -36,7 +36,7 @@ docker compose up -d --build
 默认访问：
 
 ```text
-http://127.0.0.1:18457/
+http://127.0.0.1:18457/web/
 ```
 
 ### 手动执行一次扫描

@@ -20,6 +20,7 @@ type STRMJob struct {
 	STRMPath    string `json:"strm_path"`
 	URL         string `json:"url"`
 	RelativeDir string `json:"relative_dir"`
+	ParseError  string `json:"parse_error,omitempty"`
 }
 
 type STRMProcessOptions struct {
@@ -128,14 +129,6 @@ func DiscoverSTRMJobs(root string) ([]STRMJob, error) {
 		if strings.ToLower(filepath.Ext(d.Name())) != ".strm" {
 			return nil
 		}
-		body, err := os.ReadFile(p)
-		if err != nil {
-			return fmt.Errorf("read strm: %w", err)
-		}
-		link, err := ExtractSTRMLink(body)
-		if err != nil {
-			return fmt.Errorf("parse strm %s: %w", p, err)
-		}
 		relDir, err := filepath.Rel(root, filepath.Dir(p))
 		if err != nil {
 			return err
@@ -143,7 +136,21 @@ func DiscoverSTRMJobs(root string) ([]STRMJob, error) {
 		if relDir == "." {
 			relDir = ""
 		}
-		jobs = append(jobs, STRMJob{STRMPath: p, URL: link, RelativeDir: relDir})
+		job := STRMJob{STRMPath: p, RelativeDir: relDir}
+		body, readErr := os.ReadFile(p)
+		if readErr != nil {
+			job.ParseError = fmt.Sprintf("read strm: %v", readErr)
+			jobs = append(jobs, job)
+			return nil
+		}
+		link, parseErr := ExtractSTRMLink(body)
+		if parseErr != nil {
+			job.ParseError = fmt.Sprintf("parse strm %s: %v", p, parseErr)
+			jobs = append(jobs, job)
+			return nil
+		}
+		job.URL = link
+		jobs = append(jobs, job)
 		return nil
 	})
 	if err != nil {
