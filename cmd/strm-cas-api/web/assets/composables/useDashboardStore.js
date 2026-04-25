@@ -245,6 +245,7 @@ export function useDashboardStore() {
     startCurrentFilter,
     startSelected,
     stopTasks,
+    stopAfterCurrentTasks,
     retryFailed,
     retrySelected,
     retryByFilter,

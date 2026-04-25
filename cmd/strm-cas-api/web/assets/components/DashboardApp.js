@@ -14,13 +14,25 @@ import { BatchActionsBar } from './BatchActionsBar.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 
 export const DashboardApp = {
-  components: { StatsCards, ActionToolbar, CurrentTaskCard, RecordsPanel, DownloadedPanel, CompletedPanel, DetailPanel, ReconcileSummaryCard, ToastStack, BatchActionsBar, ConfirmDialog },
+  components: {
+    StatsCards,
+    ActionToolbar,
+    CurrentTaskCard,
+    RecordsPanel,
+    DownloadedPanel,
+    CompletedPanel,
+    DetailPanel,
+    ReconcileSummaryCard,
+    ToastStack,
+    BatchActionsBar,
+    ConfirmDialog,
+  },
   setup() {
     const store = useDashboardStore()
     const toast = useToast()
     const runtime = computed(() => store.state.overview?.runtime || {})
     const stats = computed(() => store.state.overview?.stats || {})
-    const autoRefreshLabel = computed(() => runtime.value?.running ? '运行中 3s 自动刷新' : '空闲 15s 自动刷新')
+    const autoRefreshLabel = computed(() => (runtime.value?.running ? '运行中 3s 自动刷新' : '空闲 15s 自动刷新'))
     const confirmState = reactive({ visible: false, title: '', message: '', confirmText: '确认', action: null })
     let timer = null
 
@@ -30,6 +42,10 @@ export const DashboardApp = {
         const matched = typeof res.matched === 'number' ? res.matched : res.started
         const skipped = typeof res.skipped === 'number' ? res.skipped : Math.max(0, requested - res.started)
         toast.success(`${fallback}：请求 ${requested} 项，匹配 ${matched} 项，加入 ${res.started} 项，跳过 ${skipped} 项`)
+        return
+      }
+      if (res && typeof res.graceful_stopping === 'boolean') {
+        toast.success(res.graceful_stopping ? '已设置：当前活跃任务完成后停止，不再启动新任务' : '当前没有运行中的任务')
         return
       }
       if (res && typeof res.stopped === 'boolean') {
@@ -62,6 +78,7 @@ export const DashboardApp = {
       confirmState.action = action
       confirmState.confirmText = confirmText
     }
+
     const closeConfirm = () => {
       confirmState.visible = false
       confirmState.title = ''
@@ -69,6 +86,7 @@ export const DashboardApp = {
       confirmState.action = null
       confirmState.confirmText = '确认'
     }
+
     const confirmAndRun = async () => {
       if (!confirmState.action) return
       const action = confirmState.action
@@ -111,11 +129,47 @@ export const DashboardApp = {
       scheduleRefresh()
     }
 
-    const confirmBatchStartSelected = () => openConfirm('开始选中项', `即将开始 ${store.state.selectedPaths.length} 个选中任务，是否继续？`, () => runAction(() => store.startSelected(), res => toastResult(res, '选中任务已加入队列')), '开始任务')
-    const confirmBatchRetrySelected = () => openConfirm('重试选中失败项', `即将重试 ${store.state.selectedPaths.length} 个选中项中的失败任务，是否继续？`, () => runAction(() => store.retrySelected(), res => toastResult(res, '选中失败任务已重新加入队列')), '开始重试')
-    const confirmBatchStartFilter = () => openConfirm('按当前筛选开始任务', '将按当前筛选条件批量启动任务，是否继续？', () => runAction(() => store.startCurrentFilter(), res => toastResult(res, '当前筛选任务已加入队列')), '开始任务')
-    const confirmBatchRetryFilter = () => openConfirm('按当前筛选重试失败', '将按当前筛选条件批量重试失败任务，是否继续？', () => runAction(() => store.retryByFilter(), res => toastResult(res, '当前筛选下的失败任务已重新加入队列')), '开始重试')
-    const confirmStopTasks = () => openConfirm('停止当前任务', '将停止当前正在运行的批次任务，是否继续？', () => runAction(() => store.stopTasks(), res => toastResult(res, '停止请求已发出')), '停止任务')
+    const confirmBatchStartSelected = () => openConfirm(
+      '开始选中项',
+      `即将开始 ${store.state.selectedPaths.length} 个选中任务，是否继续？`,
+      () => runAction(() => store.startSelected(), (res) => toastResult(res, '选中任务已加入队列')),
+      '开始任务',
+    )
+
+    const confirmBatchRetrySelected = () => openConfirm(
+      '重试选中失败项',
+      `即将重试 ${store.state.selectedPaths.length} 个选中项中的失败任务，是否继续？`,
+      () => runAction(() => store.retrySelected(), (res) => toastResult(res, '选中失败任务已重新加入队列')),
+      '开始重试',
+    )
+
+    const confirmBatchStartFilter = () => openConfirm(
+      '按当前筛选开始任务',
+      '将按当前筛选条件批量启动任务，是否继续？',
+      () => runAction(() => store.startCurrentFilter(), (res) => toastResult(res, '当前筛选任务已加入队列')),
+      '开始任务',
+    )
+
+    const confirmBatchRetryFilter = () => openConfirm(
+      '按当前筛选重试失败',
+      '将按当前筛选条件批量重试失败任务，是否继续？',
+      () => runAction(() => store.retryByFilter(), (res) => toastResult(res, '当前筛选下的失败任务已重新加入队列')),
+      '开始重试',
+    )
+
+    const confirmStopAfterCurrentTasks = () => openConfirm(
+      '完成当前任务后停止',
+      '将不再派发新任务，等当前活跃任务自然完成后再停止，是否继续？',
+      () => runAction(() => store.stopAfterCurrentTasks(), (res) => toastResult(res, '已设置收尾停止')),
+      '设置停止',
+    )
+
+    const confirmStopTasks = () => openConfirm(
+      '停止当前任务',
+      '将立即停止当前正在运行的批次任务，是否继续？',
+      () => runAction(() => store.stopTasks(), (res) => toastResult(res, '停止请求已发出')),
+      '停止任务',
+    )
 
     onMounted(async () => {
       store.state.loading.initial = true
@@ -131,7 +185,27 @@ export const DashboardApp = {
       if (timer) clearTimeout(timer)
     })
 
-    return { store, runtime, stats, toast, runAction, autoRefreshLabel, toggleAutoRefresh, confirmState, openConfirm, closeConfirm, confirmAndRun, copyText, updateSettingsField, confirmBatchStartSelected, confirmBatchRetrySelected, confirmBatchStartFilter, confirmBatchRetryFilter, confirmStopAfterCurrentTasks, confirmStopTasks }
+    return {
+      store,
+      runtime,
+      stats,
+      toast,
+      runAction,
+      autoRefreshLabel,
+      toggleAutoRefresh,
+      confirmState,
+      openConfirm,
+      closeConfirm,
+      confirmAndRun,
+      copyText,
+      updateSettingsField,
+      confirmBatchStartSelected,
+      confirmBatchRetrySelected,
+      confirmBatchStartFilter,
+      confirmBatchRetryFilter,
+      confirmStopAfterCurrentTasks,
+      confirmStopTasks,
+    }
   },
   template: `
     <div class="layout">
@@ -145,12 +219,15 @@ export const DashboardApp = {
         @confirm="confirmAndRun"
         @cancel="closeConfirm"
       />
+
       <div class="title">strm-cas 控制台</div>
       <div v-if="store.state.error" class="card" style="background:#fee2e2;color:#991b1b">{{ store.state.error }}</div>
       <div v-if="store.state.loading.initial" class="card">页面初始化加载中...</div>
       <div v-if="store.state.errors.overview" class="card" style="background:#fff7ed;color:#9a3412">概览刷新失败：{{ store.state.errors.overview }}</div>
+
       <StatsCards :stats="stats" />
       <ReconcileSummaryCard :summary="store.state.reconcileSummary" />
+
       <ActionToolbar
         :running="!!runtime.running"
         :runtime="runtime"
@@ -161,11 +238,11 @@ export const DashboardApp = {
         :auto-refresh-label="autoRefreshLabel"
         :settings="store.state.settings"
         @scan="runAction(() => store.scan(), '扫描完成')"
-        @reconcile-db="runAction(() => store.reconcileDB(), res => toastResult(res, '数据库已纠正'))"
-        @start="runAction(() => store.start(), res => toastResult(res, '任务已启动'))"
+        @reconcile-db="runAction(() => store.reconcileDB(), (res) => toastResult(res, '数据库已纠正'))"
+        @start="runAction(() => store.start(), (res) => toastResult(res, '任务已启动'))"
         @stop-after-current="confirmStopAfterCurrentTasks"
         @stop="confirmStopTasks"
-        @retry-failed="runAction(() => store.retryFailed(), res => toastResult(res, '失败任务已重新加入队列'))"
+        @retry-failed="runAction(() => store.retryFailed(), (res) => toastResult(res, '失败任务已重新加入队列'))"
         @refresh="runAction(() => store.refreshAll(), '已刷新')"
         @save-settings="runAction(() => store.saveSettings(), '设置已保存，将作用于后续启动的任务')"
         @update-settings="updateSettingsField"
@@ -175,7 +252,15 @@ export const DashboardApp = {
         @clear-step2="runAction(() => store.clearDB(), '数据库已清理')"
         @clear-cancel="store.state.confirmClear = false"
       />
-      <CurrentTaskCard class="section" :current="runtime.current || null" :active-count="runtime.active_count || 0" :active-items="runtime.active_items || []" :total-speed-bytes-per-sec="runtime.total_speed_bytes_per_sec || 0" />
+
+      <CurrentTaskCard
+        class="section"
+        :current="runtime.current || null"
+        :active-count="runtime.active_count || 0"
+        :active-items="runtime.active_items || []"
+        :total-speed-bytes-per-sec="runtime.total_speed_bytes_per_sec || 0"
+      />
+
       <div class="main-grid section">
         <div>
           <BatchActionsBar
@@ -188,6 +273,7 @@ export const DashboardApp = {
             @retry-selected="confirmBatchRetrySelected"
             @clear-selected="store.clearSelected()"
           />
+
           <RecordsPanel
             :records="store.state.records"
             :filters="store.state.filters"
@@ -199,11 +285,12 @@ export const DashboardApp = {
             @set-status="(v) => { store.state.filters.status = v; store.state.filters.page = 1; runAction(() => store.refreshRecords()) }"
             @apply-search="(v) => { store.state.filters.search = v; store.state.filters.page = 1; runAction(() => store.refreshRecords(), '筛选已更新') }"
             @detail="(path) => runAction(() => store.loadDetail(path))"
-            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
+            @retry="(path) => runAction(() => store.retryOne(path), (res) => toastResult(res, '任务已重新加入队列'))"
             @page-prev="() => { if (store.state.filters.page > 1) { store.state.filters.page--; runAction(() => store.refreshRecords()) } }"
             @page-next="() => { store.state.filters.page++; runAction(() => store.refreshRecords()) }"
             @page-jump="(v) => { store.state.filters.page = v; runAction(() => store.refreshRecords()) }"
           />
+
           <DownloadedPanel
             :downloaded="store.state.downloaded"
             :page="store.state.downloadedPage"
@@ -214,6 +301,7 @@ export const DashboardApp = {
             @page-next="() => { store.state.downloadedPage++; runAction(() => store.refreshDownloaded()) }"
             @page-jump="(v) => { store.state.downloadedPage = v; runAction(() => store.refreshDownloaded()) }"
           />
+
           <CompletedPanel
             :completed="store.state.completed"
             :status="store.state.completedStatus"
@@ -222,19 +310,20 @@ export const DashboardApp = {
             :error-message="store.state.errors.completed"
             @set-status="(v) => { store.state.completedStatus = v; store.state.completedPage = 1; runAction(() => store.refreshCompleted()) }"
             @detail="(path) => runAction(() => store.loadDetail(path))"
-            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
+            @retry="(path) => runAction(() => store.retryOne(path), (res) => toastResult(res, '任务已重新加入队列'))"
             @page-prev="() => { if (store.state.completedPage > 1) { store.state.completedPage--; runAction(() => store.refreshCompleted()) } }"
             @page-next="() => { store.state.completedPage++; runAction(() => store.refreshCompleted()) }"
             @page-jump="(v) => { store.state.completedPage = v; runAction(() => store.refreshCompleted()) }"
           />
         </div>
+
         <div>
           <DetailPanel
             :detail="store.state.detail"
             :selected-paths="store.state.selectedPaths"
             :loading="store.state.loading"
             @toggle-selected="store.toggleSelected($event)"
-            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
+            @retry="(path) => runAction(() => store.retryOne(path), (res) => toastResult(res, '任务已重新加入队列'))"
             @copy="copyText"
           />
         </div>
