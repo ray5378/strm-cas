@@ -23,10 +23,19 @@ export const DashboardApp = {
     const confirmState = reactive({ visible: false, title: '', message: '', confirmText: '确认', action: null })
     let timer = null
 
+    const toastResult = (res, fallback) => {
+      if (res && typeof res.started === 'number') {
+        toast.success(`${fallback}：已加入 ${res.started} 项`)
+        return
+      }
+      toast.success(fallback)
+    }
+
     const runAction = async (fn, successMessage) => {
       try {
         const res = await fn()
-        if (successMessage) toast.success(successMessage)
+        if (typeof successMessage === 'function') successMessage(res)
+        else if (successMessage) toast.success(successMessage)
         return res
       } catch (e) {
         toast.error(e.message || String(e))
@@ -85,10 +94,10 @@ export const DashboardApp = {
       scheduleRefresh()
     }
 
-    const confirmBatchStartSelected = () => openConfirm('开始选中项', `即将开始 ${store.state.selectedPaths.length} 个选中任务，是否继续？`, () => runAction(() => store.startSelected(), '选中任务已加入队列'), '开始任务')
-    const confirmBatchRetrySelected = () => openConfirm('重试选中失败项', `即将重试 ${store.state.selectedPaths.length} 个选中项中的失败任务，是否继续？`, () => runAction(() => store.retrySelected(), '选中失败任务已重新加入队列'), '开始重试')
-    const confirmBatchStartFilter = () => openConfirm('按当前筛选开始任务', '将按当前筛选条件批量启动任务，是否继续？', () => runAction(() => store.startCurrentFilter(), '当前筛选任务已加入队列'), '开始任务')
-    const confirmBatchRetryFilter = () => openConfirm('按当前筛选重试失败', '将按当前筛选条件批量重试失败任务，是否继续？', () => runAction(() => store.retryByFilter(), '当前筛选下的失败任务已重新加入队列'), '开始重试')
+    const confirmBatchStartSelected = () => openConfirm('开始选中项', `即将开始 ${store.state.selectedPaths.length} 个选中任务，是否继续？`, () => runAction(() => store.startSelected(), res => toastResult(res, '选中任务已加入队列')), '开始任务')
+    const confirmBatchRetrySelected = () => openConfirm('重试选中失败项', `即将重试 ${store.state.selectedPaths.length} 个选中项中的失败任务，是否继续？`, () => runAction(() => store.retrySelected(), res => toastResult(res, '选中失败任务已重新加入队列')), '开始重试')
+    const confirmBatchStartFilter = () => openConfirm('按当前筛选开始任务', '将按当前筛选条件批量启动任务，是否继续？', () => runAction(() => store.startCurrentFilter(), res => toastResult(res, '当前筛选任务已加入队列')), '开始任务')
+    const confirmBatchRetryFilter = () => openConfirm('按当前筛选重试失败', '将按当前筛选条件批量重试失败任务，是否继续？', () => runAction(() => store.retryByFilter(), res => toastResult(res, '当前筛选下的失败任务已重新加入队列')), '开始重试')
 
     onMounted(async () => {
       store.state.loading.initial = true
@@ -132,8 +141,8 @@ export const DashboardApp = {
         :auto-refresh-enabled="store.state.autoRefreshEnabled"
         :auto-refresh-label="autoRefreshLabel"
         @scan="runAction(() => store.scan(), '扫描完成')"
-        @start="runAction(() => store.start(), '任务已启动')"
-        @retry-failed="runAction(() => store.retryFailed(), '失败任务已重新加入队列')"
+        @start="runAction(() => store.start(), res => toastResult(res, '任务已启动'))"
+        @retry-failed="runAction(() => store.retryFailed(), res => toastResult(res, '失败任务已重新加入队列'))"
         @refresh="runAction(() => store.refreshAll(), '已刷新')"
         @toggle-auto-refresh="toggleAutoRefresh"
         @set-mode="store.state.startMode = $event"
@@ -165,7 +174,7 @@ export const DashboardApp = {
             @set-status="(v) => { store.state.filters.status = v; store.state.filters.page = 1; runAction(() => store.refreshRecords()) }"
             @apply-search="(v) => { store.state.filters.search = v; store.state.filters.page = 1; runAction(() => store.refreshRecords(), '筛选已更新') }"
             @detail="(path) => runAction(() => store.loadDetail(path))"
-            @retry="(path) => runAction(() => store.retryOne(path), '任务已重新加入队列')"
+            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
             @page-prev="() => { if (store.state.filters.page > 1) { store.state.filters.page--; runAction(() => store.refreshRecords()) } }"
             @page-next="() => { store.state.filters.page++; runAction(() => store.refreshRecords()) }"
             @page-jump="(v) => { store.state.filters.page = v; runAction(() => store.refreshRecords()) }"
@@ -186,7 +195,8 @@ export const DashboardApp = {
             :loading="store.state.loading"
             :error-message="store.state.errors.completed"
             @set-status="(v) => { store.state.completedStatus = v; store.state.completedPage = 1; runAction(() => store.refreshCompleted()) }"
-            @retry="(path) => runAction(() => store.retryOne(path), '任务已重新加入队列')"
+            @detail="(path) => runAction(() => store.loadDetail(path))"
+            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
             @page-prev="() => { if (store.state.completedPage > 1) { store.state.completedPage--; runAction(() => store.refreshCompleted()) } }"
             @page-next="() => { store.state.completedPage++; runAction(() => store.refreshCompleted()) }"
             @page-jump="(v) => { store.state.completedPage = v; runAction(() => store.refreshCompleted()) }"
@@ -198,7 +208,7 @@ export const DashboardApp = {
             :selected-paths="store.state.selectedPaths"
             :loading="store.state.loading"
             @toggle-selected="store.toggleSelected($event)"
-            @retry="(path) => runAction(() => store.retryOne(path), '任务已重新加入队列')"
+            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
             @copy="copyText"
           />
         </div>

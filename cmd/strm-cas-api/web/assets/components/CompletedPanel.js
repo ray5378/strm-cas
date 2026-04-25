@@ -12,7 +12,7 @@ export const CompletedPanel = {
     loading: { type: Object, default: () => ({}) },
     errorMessage: { type: String, default: '' },
   },
-  emits: ['set-status', 'retry', 'page-prev', 'page-next', 'page-jump'],
+  emits: ['set-status', 'retry', 'detail', 'page-prev', 'page-next', 'page-jump'],
   computed: {
     emptyTitle() {
       return this.status ? '当前筛选下没有结果' : '暂无已完成任务'
@@ -49,7 +49,7 @@ export const CompletedPanel = {
         <EmptyState v-if="!(completed.items || []).length" :colspan="4" :title="emptyTitle" :message="emptyMessage" />
         <tr v-for="item in (completed.items || [])" :key="(item.job?.strm_path || '') + (item.cas_path || '')">
           <td><span class="badge" :class="item.status || 'pending'">{{ statusText(item.status) }}</span></td>
-          <td class="mono">{{ item.job?.strm_path || '' }}</td>
+          <td class="mono"><button class="link-button" @click="$emit('detail', item.job?.strm_path || '')">{{ item.job?.strm_path || '' }}</button></td>
           <td class="mono">{{ item.cas_path || '' }}</td>
           <td>{{ item.message || '' }} <button v-if="item.status === 'failed'" @click="$emit('retry', item.job?.strm_path || '')" class="warning" :disabled="loading.retryOne === (item.job?.strm_path || '')" :class="{ 'is-loading': loading.retryOne === (item.job?.strm_path || '') }">{{ loading.retryOne === (item.job?.strm_path || '') ? '重试中...' : '重试' }}</button></td>
         </tr>
