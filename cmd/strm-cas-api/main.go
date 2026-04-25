@@ -64,8 +64,10 @@ func main() {
 	mux.HandleFunc("/api/runtime", app.handleRuntime)
 	mux.HandleFunc("/api/runtime/downloaded", app.handleRuntimeDownloaded)
 	mux.HandleFunc("/api/runtime/completed", app.handleRuntimeCompleted)
-	mux.HandleFunc("/api/scan/start", app.handleScanStart)
+	mux.HandleFunc("/api/scan/refresh", app.handleScanRefresh)
+	mux.HandleFunc("/api/tasks/start", app.handleTasksStart)
 	mux.HandleFunc("/api/tasks/retry", app.handleTaskRetry)
+	mux.HandleFunc("/api/tasks/retry-failed", app.handleRetryFailed)
 	mux.HandleFunc("/api/db/clear", app.handleDBClear)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -81,7 +83,7 @@ func main() {
 }
 
 func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
-	jobs, err := a.currentJobs()
+	jobs, err := a.currentJobs(true)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -95,7 +97,7 @@ func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleRecords(w http.ResponseWriter, r *http.Request) {
-	jobs, err := a.currentJobs()
+	jobs, err := a.currentJobs(true)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -139,35 +141,54 @@ func (a *app) handleRuntimeCompleted(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.runtime.PaginateCompleted(parsePage(r), parsePageSize(r), r.URL.Query().Get("status")))
 }
 
-func (a *app) handleScanStart(w http.ResponseWriter, r *http.Request) {
+func (a *app) handleScanRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, fmt.Errorf("method not allowed"), 405)
 		return
 	}
-	a.mu.Lock()
-	if a.runtime.Snapshot().Running {
-		a.mu.Unlock()
-		writeErr(w, fmt.Errorf("scan already running"), 409)
+	jobs, err := a.currentJobs(true)
+	if err != nil {
+		writeErr(w, err, 500)
 		return
 	}
-	a.runtime.MarkStarted()
-	cfg := a.cfg
-	cfg.OnProgress = func(p cas.ProgressInfo) {
-		a.runtime.SetCurrent(p)
-		if p.Stage == "downloaded" || p.Stage == "cache_recovered" {
-			a.runtime.AddDownloaded(p)
+	stats, err := cas.ComputeStats(a.db, jobs)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "stats": stats, "total": len(jobs)})
+}
+
+func (a *app) handleTasksStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	jobs, err := a.currentJobs(true)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	filtered := make([]cas.STRMJob, 0, len(jobs))
+	for _, job := range jobs {
+		rec, _ := cas.GetRecord(a.db, job.STRMPath)
+		status := "pending"
+		if rec != nil && rec.Status != "" {
+			status = rec.Status
+		}
+		if status == "pending" || status == "failed" {
+			filtered = append(filtered, job)
 		}
 	}
-	cfg.OnResult = func(res cas.STRMProcessResult) {
-		a.runtime.AddCompleted(res)
-		_ = cas.UpdateResult(a.db, res)
+	if len(filtered) == 0 {
+		writeJSON(w, map[string]any{"ok": true, "started": 0})
+		return
 	}
-	go func() {
-		defer a.runtime.MarkFinished()
-		defer a.mu.Unlock()
-		_, _ = cas.ProcessSTRMTree(cfg)
-	}()
-	writeJSON(w, map[string]any{"ok": true})
+	if err := a.startJobs(filtered); err != nil {
+		writeErr(w, err, 409)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "started": len(filtered)})
 }
 
 func (a *app) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
@@ -175,77 +196,62 @@ func (a *app) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("method not allowed"), 405)
 		return
 	}
-	a.mu.Lock()
-	if a.runtime.Snapshot().Running {
-		a.mu.Unlock()
-		writeErr(w, fmt.Errorf("scan already running"), 409)
-		return
-	}
 	var req struct {
 		Path string `json:"path"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		a.mu.Unlock()
-		writeErr(w, fmt.Errorf("invalid request body"), 400)
-		return
-	}
-	if req.Path == "" {
-		a.mu.Unlock()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" {
 		writeErr(w, fmt.Errorf("missing path"), 400)
 		return
 	}
-	jobs, err := a.currentJobs()
+	jobs, err := a.currentJobs(true)
 	if err != nil {
-		a.mu.Unlock()
 		writeErr(w, err, 500)
 		return
 	}
-	var selected *cas.STRMJob
-	for i := range jobs {
-		if jobs[i].STRMPath == req.Path {
-			selected = &jobs[i]
+	selected := make([]cas.STRMJob, 0, 1)
+	for _, job := range jobs {
+		if job.STRMPath == req.Path {
+			selected = append(selected, job)
 			break
 		}
 	}
-	if selected == nil {
-		a.mu.Unlock()
+	if len(selected) == 0 {
 		writeErr(w, fmt.Errorf("task not found"), 404)
 		return
 	}
-	cfg := a.cfg
-	a.runtime.MarkStarted()
-	cfg.OnProgress = func(p cas.ProgressInfo) {
-		a.runtime.SetCurrent(p)
-		if p.Stage == "downloaded" || p.Stage == "cache_recovered" {
-			a.runtime.AddDownloaded(p)
+	if err := a.startJobs(selected); err != nil {
+		writeErr(w, err, 409)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "started": 1, "path": req.Path})
+}
+
+func (a *app) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	jobs, err := a.currentJobs(true)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	filtered := make([]cas.STRMJob, 0)
+	for _, job := range jobs {
+		rec, _ := cas.GetRecord(a.db, job.STRMPath)
+		if rec != nil && rec.Status == "failed" {
+			filtered = append(filtered, job)
 		}
 	}
-	cfg.OnResult = func(res cas.STRMProcessResult) {
-		a.runtime.AddCompleted(res)
-		_ = cas.UpdateResult(a.db, res)
+	if len(filtered) == 0 {
+		writeJSON(w, map[string]any{"ok": true, "started": 0})
+		return
 	}
-	job := *selected
-	go func() {
-		defer a.runtime.MarkFinished()
-		defer a.mu.Unlock()
-		client := &http.Client{Timeout: cfg.HTTPTimeout}
-		res, err := cas.ProcessSingleSTRM(client, cfg, job)
-		if err != nil {
-			status := "failed"
-			if job.ParseError != "" {
-				status = "exception"
-			}
-			failed := cas.STRMProcessResult{Job: job, Status: status, Message: err.Error()}
-			a.runtime.AddCompleted(failed)
-			_ = cas.UpdateResult(a.db, failed)
-			return
-		}
-		if res != nil {
-			a.runtime.AddCompleted(*res)
-			_ = cas.UpdateResult(a.db, *res)
-		}
-	}()
-	writeJSON(w, map[string]any{"ok": true, "path": req.Path})
+	if err := a.startJobs(filtered); err != nil {
+		writeErr(w, err, 409)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "started": len(filtered)})
 }
 
 func (a *app) handleDBClear(w http.ResponseWriter, r *http.Request) {
@@ -257,22 +263,68 @@ func (a *app) handleDBClear(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("scan is running, cannot clear database"), 409)
 		return
 	}
-	if err := cas.ClearStateDB(a.cfg.DBPath); err != nil {
+	if err := cas.ClearStateDBHandle(a.db); err != nil {
 		writeErr(w, err, 500)
 		return
 	}
+	a.runtime.Reset()
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-func (a *app) currentJobs() ([]cas.STRMJob, error) {
+func (a *app) currentJobs(sync bool) ([]cas.STRMJob, error) {
 	jobs, err := cas.DiscoverSTRMJobs(a.cfg.STRMRoot)
 	if err != nil {
 		return nil, err
 	}
-	if err := cas.SyncJobsToState(a.db, jobs); err != nil {
-		return nil, err
+	if sync {
+		if err := cas.SyncJobsToState(a.db, jobs); err != nil {
+			return nil, err
+		}
 	}
 	return jobs, nil
+}
+
+func (a *app) startJobs(jobs []cas.STRMJob) error {
+	a.mu.Lock()
+	if a.runtime.Snapshot().Running {
+		a.mu.Unlock()
+		return fmt.Errorf("task already running")
+	}
+	a.runtime.MarkStarted()
+	cfg := a.cfg
+	cfg.OnProgress = func(p cas.ProgressInfo) {
+		a.runtime.SetCurrent(p)
+		if p.Stage == "downloaded" || p.Stage == "cache_recovered" {
+			a.runtime.AddDownloaded(p)
+		}
+	}
+	cfg.OnResult = func(res cas.STRMProcessResult) {
+		a.runtime.AddCompleted(res)
+		_ = cas.UpdateResult(a.db, res)
+	}
+	go func(selected []cas.STRMJob) {
+		defer a.runtime.MarkFinished()
+		defer a.mu.Unlock()
+		client := &http.Client{Timeout: cfg.HTTPTimeout}
+		for _, job := range selected {
+			res, err := cas.ProcessSingleSTRM(client, cfg, job)
+			if err != nil {
+				status := "failed"
+				if job.ParseError != "" {
+					status = "exception"
+				}
+				failed := cas.STRMProcessResult{Job: job, Status: status, Message: err.Error()}
+				a.runtime.AddCompleted(failed)
+				_ = cas.UpdateResult(a.db, failed)
+				continue
+			}
+			if res != nil {
+				a.runtime.AddCompleted(*res)
+				_ = cas.UpdateResult(a.db, *res)
+			}
+		}
+	}(append([]cas.STRMJob(nil), jobs...))
+	return nil
 }
 
 func parsePage(r *http.Request) int {
@@ -324,6 +376,4 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func init() {
-	_ = filepath.Separator
-}
+func init() { _ = filepath.Separator }

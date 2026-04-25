@@ -36,6 +36,17 @@ func NewRuntimeStore(maxHistory int) *RuntimeStore {
 	return &RuntimeStore{maxHistory: maxHistory}
 }
 
+func (r *RuntimeStore) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running = false
+	r.startedAt = ""
+	r.endedAt = ""
+	r.current = nil
+	r.downloaded = nil
+	r.completed = nil
+}
+
 func (r *RuntimeStore) MarkStarted() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

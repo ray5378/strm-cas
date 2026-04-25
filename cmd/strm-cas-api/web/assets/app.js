@@ -17,7 +17,9 @@ const root = {
         ${statsCards(ov.stats)}
         <div class="section card">
           <div class="toolbar">
-            <button data-act="scan" ${ov.runtime?.running ? 'disabled' : ''}>开始扫描 /strm</button>
+            <button data-act="scan-refresh" ${ov.runtime?.running ? 'disabled' : ''}>扫描 /strm</button>
+            <button data-act="start-tasks" ${ov.runtime?.running ? 'disabled' : ''}>开始下载生成 CAS</button>
+            <button data-act="retry-failed" ${ov.runtime?.running ? 'disabled' : ''}>批量重试失败任务</button>
             <button data-act="refresh">刷新</button>
             ${!confirmClear ? `<button data-act="clear-db-step1" ${ov.runtime?.running ? 'disabled' : ''} style="background:#dc2626">清理数据库</button>` : `<button data-act="clear-db-step2" ${ov.runtime?.running ? 'disabled' : ''} style="background:#b91c1c">确认清理数据库</button><button data-act="clear-db-cancel" style="background:#64748b">取消</button>`}
             <span class="muted">运行中: ${ov.runtime?.running ? '是' : '否'}</span>
@@ -40,7 +42,7 @@ const root = {
                 <button data-act="apply-filters">筛选</button>
               </div>
               <table><thead><tr><th>状态</th><th>strm</th><th>cas</th><th>最后结果</th><th></th></tr></thead><tbody>
-                ${(store.records.items || []).map(it => `<tr><td>${statusBadge(it.status)}</td><td class="mono">${escapeHtml(it.strm_path)}</td><td class="mono">${escapeHtml(it.cas_path || '')}</td><td>${escapeHtml(it.last_message || '')}</td><td><button data-detail="${encodeURIComponent(it.strm_path)}">详情</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">无数据</td></tr>'}
+                ${(store.records.items || []).map(it => `<tr><td>${statusBadge(it.status)}</td><td class="mono">${escapeHtml(it.strm_path)}</td><td class="mono">${escapeHtml(it.cas_path || '')}</td><td>${escapeHtml(it.last_message || '')}</td><td><button data-detail="${encodeURIComponent(it.strm_path)}">详情</button>${it.status === 'failed' ? ` <button data-retry="${encodeURIComponent(it.strm_path)}" style="background:#ea580c">重试</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">无数据</td></tr>'}
               </tbody></table>
               ${pager(store.records.total, store.filters.page, store.filters.page_size, 'records')}
             </div>
@@ -54,7 +56,7 @@ const root = {
             <div class="card section">
               <div class="toolbar"><strong>已完成任务</strong><select id="completedStatus"><option value="">全部</option><option value="done">已完成</option><option value="failed">失败</option><option value="exception">异常</option><option value="skipped">已跳过</option></select><button data-act="apply-completed">筛选</button></div>
               <table><thead><tr><th>状态</th><th>strm</th><th>cas</th><th>消息</th></tr></thead><tbody>
-                ${(store.completed.items || []).map(it => `<tr><td>${statusBadge(it.status)}</td><td class="mono">${escapeHtml(it.job?.strm_path || '')}</td><td class="mono">${escapeHtml(it.cas_path || '')}</td><td>${escapeHtml(it.message || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">无数据</td></tr>'}
+                ${(store.completed.items || []).map(it => `<tr><td>${statusBadge(it.status)}</td><td class="mono">${escapeHtml(it.job?.strm_path || '')}</td><td class="mono">${escapeHtml(it.cas_path || '')}</td><td>${escapeHtml(it.message || '')}${it.status === 'failed' ? ` <button data-retry="${encodeURIComponent(it.job?.strm_path || '')}" style="background:#ea580c">重试</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">无数据</td></tr>'}
               </tbody></table>
               ${pager(store.completed.total, store.completedPage, 10, 'completed')}
             </div>
@@ -69,14 +71,17 @@ const root = {
     el.onclick = async (e) => {
       const act = e.target?.dataset?.act
       const detail = e.target?.dataset?.detail
+      const retry = e.target?.dataset?.retry
       try {
         if (detail) { await store.loadDetail(decodeURIComponent(detail)); rerender() }
         if (retry) { await api.retryTask(decodeURIComponent(retry)); await store.refreshAll(); rerender() }
-        if (act === 'scan') { await store.startScan(); await store.refreshAll(); rerender() }
+        if (act === 'scan-refresh') { await store.refreshScan(); await store.refreshAll(); rerender() }
+        if (act === 'start-tasks') { await store.startTasks(); await store.refreshAll(); rerender() }
+        if (act === 'retry-failed') { await store.retryFailedTasks(); await store.refreshAll(); rerender() }
         if (act === 'refresh') { await store.refreshAll(); rerender() }
         if (act === 'clear-db-step1') { confirmClear = true; rerender() }
         if (act === 'clear-db-cancel') { confirmClear = false; rerender() }
-        if (act === 'clear-db-step2') { await api.clearDB(); confirmClear = false; await store.refreshAll(); rerender() }
+        if (act === 'clear-db-step2') { await api.clearDB(); confirmClear = false; store.detail = null; await store.refreshAll(); rerender() }
         if (act === 'apply-filters') { store.filters.status = el.querySelector('#status').value; store.filters.search = el.querySelector('#search').value; store.filters.page = 1; await store.refreshRecords(); rerender() }
         if (act === 'apply-completed') { store.completedStatus = el.querySelector('#completedStatus').value; store.completedPage = 1; await store.refreshCompleted(); rerender() }
         if (act === 'records:prev') { if (store.filters.page > 1) store.filters.page--; await store.refreshRecords(); rerender() }
@@ -96,8 +101,5 @@ const root = {
 function rerender() { document.querySelector('#app').innerHTML = root.render(); root.bind(document.querySelector('#app')) }
 function renderDetail(obj) { return Object.entries(obj).map(([k,v]) => `<div><strong>${escapeHtml(k)}:</strong> ${escapeHtml(typeof v === 'string' ? v : JSON.stringify(v, null, 2))}</div>`).join('') }
 function escapeHtml(s='') { return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;') }
-
-createApp(root).mount('#app')
-t;') }
 
 createApp(root).mount('#app')

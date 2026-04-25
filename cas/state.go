@@ -66,6 +66,13 @@ func ClearStateDB(path string) error {
 		return err
 	}
 	defer db.Close()
+	return ClearStateDBHandle(db)
+}
+
+func ClearStateDBHandle(db *bolt.DB) error {
+	if db == nil {
+		return fmt.Errorf("nil db")
+	}
 	return db.Update(func(tx *bolt.Tx) error {
 		if err := tx.DeleteBucket([]byte(stateBucket)); err != nil && err != bolt.ErrBucketNotFound {
 			return err
@@ -94,7 +101,7 @@ func UpsertDiscoveredJob(db *bolt.DB, job STRMJob) error {
 		rec.RelativeDir = job.RelativeDir
 		rec.LastSeenAt = now
 		if job.ParseError != "" {
-			rec.Status = "failed"
+			rec.Status = "exception"
 			rec.LastMessage = job.ParseError
 			rec.LastProcessedAt = now
 		}

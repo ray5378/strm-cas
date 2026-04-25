@@ -11,7 +11,9 @@ export const api = {
   runtime: () => getJSON('/api/runtime'),
   runtimeDownloaded: (params) => getJSON('/api/runtime/downloaded?' + new URLSearchParams(params)),
   runtimeCompleted: (params) => getJSON('/api/runtime/completed?' + new URLSearchParams(params)),
-  startScan: () => getJSON('/api/scan/start', { method: 'POST' }),
+  refreshScan: () => getJSON('/api/scan/refresh', { method: 'POST' }),
+  startTasks: () => getJSON('/api/tasks/start', { method: 'POST' }),
   retryTask: (path) => getJSON('/api/tasks/retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) }),
+  retryFailedTasks: () => getJSON('/api/tasks/retry-failed', { method: 'POST' }),
   clearDB: () => getJSON('/api/db/clear', { method: 'POST' }),
 }
