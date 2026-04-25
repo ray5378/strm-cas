@@ -29,6 +29,7 @@ export const ActionToolbar = {
       <StartScopeSelector :model-value="startMode" :disabled="running || loading.start" :loading="loading.start" @update:modelValue="$emit('set-mode', $event)" @start="$emit('start')" />
       <div class="toolbar section">
         <button @click="$emit('retry-failed')" :disabled="running || loading.retryFailed" :class="{ 'is-loading': loading.retryFailed }">{{ loading.retryFailed ? '重试中...' : '批量重试失败任务' }}</button>
+        <button v-if="running" @click="$emit('stop-after-current')" class="secondary" :disabled="loading.stopAfterCurrent || runtime.graceful_stopping" :class="{ 'is-loading': loading.stopAfterCurrent }">{{ runtime.graceful_stopping ? '已设置收尾停止' : (loading.stopAfterCurrent ? '设置中...' : '完成当前任务后停止') }}</button>
         <button v-if="running" @click="$emit('stop')" class="danger" :disabled="loading.stop" :class="{ 'is-loading': loading.stop }">{{ loading.stop ? '停止中...' : '停止任务' }}</button>
         <button @click="$emit('refresh')" :disabled="loading.refreshAll" :class="{ 'is-loading': loading.refreshAll }">{{ loading.refreshAll ? '刷新中...' : '刷新' }}</button>
         <button @click="$emit('toggle-auto-refresh')" class="secondary">自动刷新：{{ autoRefreshEnabled ? '开' : '关' }}</button>
@@ -41,6 +42,7 @@ export const ActionToolbar = {
           <button @click="$emit('clear-cancel')" class="secondary" :disabled="loading.clearDB">取消</button>
         </template>
         <span class="muted">运行中: {{ running ? '是' : '否' }}</span>
+        <span class="muted">收尾停止: {{ runtime.graceful_stopping ? '已设置' : '未设置' }}</span>
         <span class="muted">并发: {{ settings.concurrency }}</span>
         <span class="muted">总限速: {{ settings.total_rate_limit_mb > 0 ? settings.total_rate_limit_mb + ' MB/s' : '不限速' }}</span>
         <span class="muted">已下载: {{ runtime.downloaded_count || 0 }}</span>

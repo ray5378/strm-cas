@@ -28,14 +28,16 @@ type taskSettings struct {
 }
 
 type app struct {
-	cfg        cas.STRMProcessOptions
-	runtime    *cas.RuntimeStore
-	db         *bolt.DB
-	mu         sync.Mutex
-	cancelMu   sync.Mutex
-	cancelRun  context.CancelFunc
-	settingsMu sync.RWMutex
-	settings   taskSettings
+	cfg              cas.STRMProcessOptions
+	runtime          *cas.RuntimeStore
+	db               *bolt.DB
+	mu               sync.Mutex
+	cancelMu         sync.Mutex
+	cancelRun        context.CancelFunc
+	gracefulStopMu   sync.Mutex
+	gracefulStopFlag bool
+	settingsMu       sync.RWMutex
+	settings         taskSettings
 }
 
 func main() {
@@ -90,6 +92,7 @@ func main() {
 	mux.HandleFunc("/api/tasks/start", app.handleTasksStart)
 	mux.HandleFunc("/api/tasks/start-selected", app.handleStartSelected)
 	mux.HandleFunc("/api/tasks/stop", app.handleTasksStop)
+	mux.HandleFunc("/api/tasks/stop-after-current", app.handleTasksStopAfterCurrent)
 	mux.HandleFunc("/api/tasks/retry", app.handleTaskRetry)
 	mux.HandleFunc("/api/tasks/retry-failed", app.handleRetryFailed)
 	mux.HandleFunc("/api/tasks/retry-selected", app.handleRetrySelected)
@@ -111,6 +114,19 @@ func (a *app) getSettings() taskSettings {
 	a.settingsMu.RLock()
 	defer a.settingsMu.RUnlock()
 	return a.settings
+}
+
+func (a *app) setGracefulStop(v bool) {
+	a.gracefulStopMu.Lock()
+	defer a.gracefulStopMu.Unlock()
+	a.gracefulStopFlag = v
+	a.runtime.SetGracefulStopping(v)
+}
+
+func (a *app) isGracefulStop() bool {
+	a.gracefulStopMu.Lock()
+	defer a.gracefulStopMu.Unlock()
+	return a.gracefulStopFlag
 }
 
 func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -333,8 +349,22 @@ func (a *app) handleTasksStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": true, "stopped": false})
 		return
 	}
+	a.setGracefulStop(false)
 	cancel()
 	writeJSON(w, map[string]any{"ok": true, "stopped": true})
+}
+
+func (a *app) handleTasksStopAfterCurrent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	if !a.runtime.Snapshot().Running {
+		writeJSON(w, map[string]any{"ok": true, "graceful_stopping": false})
+		return
+	}
+	a.setGracefulStop(true)
+	writeJSON(w, map[string]any{"ok": true, "graceful_stopping": true})
 }
 
 func (a *app) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
@@ -518,6 +548,7 @@ func (a *app) startJobs(jobs []cas.STRMJob) error {
 		return fmt.Errorf("task already running")
 	}
 	a.runtime.MarkStarted()
+	a.setGracefulStop(false)
 	settings := a.getSettings()
 	cfg := a.cfg
 	cfg.Concurrency = settings.Concurrency
@@ -539,6 +570,7 @@ func (a *app) startJobs(jobs []cas.STRMJob) error {
 	a.cancelMu.Unlock()
 	go func(selected []cas.STRMJob) {
 		defer a.runtime.MarkFinished()
+		defer a.setGracefulStop(false)
 		defer a.mu.Unlock()
 		defer func() { a.cancelMu.Lock(); a.cancelRun = nil; a.cancelMu.Unlock() }()
 		client := &http.Client{Timeout: cfg.HTTPTimeout}
@@ -645,4 +677,5 @@ func withCORS(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 func init() { _ = filepath.Separator }

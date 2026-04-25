@@ -26,6 +26,7 @@ export function useDashboardStore() {
       scan: false,
       start: false,
       stop: false,
+      stopAfterCurrent: false,
       saveSettings: false,
       retryFailed: false,
       reconcileDB: false,
@@ -170,6 +171,13 @@ export function useDashboardStore() {
       await refreshAll()
       return res
     }, 'stop')
+  }
+  async function stopAfterCurrentTasks() {
+    return wrap(async () => {
+      const res = await dashboardService.stopAfterCurrentTasks()
+      await refreshAll()
+      return res
+    }, 'stopAfterCurrent')
   }
   async function retryFailed() {
     return wrap(async () => {

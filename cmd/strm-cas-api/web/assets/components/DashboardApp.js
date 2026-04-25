@@ -141,7 +141,7 @@ export const DashboardApp = {
         :title="confirmState.title"
         :message="confirmState.message"
         :confirm-text="confirmState.confirmText"
-        :loading="store.state.loading.start || store.state.loading.retryFailed || store.state.loading.stop || store.state.loading.reconcileDB"
+        :loading="store.state.loading.start || store.state.loading.retryFailed || store.state.loading.stop || store.state.loading.stopAfterCurrent || store.state.loading.reconcileDB"
         @confirm="confirmAndRun"
         @cancel="closeConfirm"
       />
@@ -163,6 +163,7 @@ export const DashboardApp = {
         @scan="runAction(() => store.scan(), '扫描完成')"
         @reconcile-db="runAction(() => store.reconcileDB(), res => toastResult(res, '数据库已纠正'))"
         @start="runAction(() => store.start(), res => toastResult(res, '任务已启动'))"
+        @stop-after-current="confirmStopAfterCurrentTasks"
         @stop="confirmStopTasks"
         @retry-failed="runAction(() => store.retryFailed(), res => toastResult(res, '失败任务已重新加入队列'))"
         @refresh="runAction(() => store.refreshAll(), '已刷新')"
@@ -233,6 +234,15 @@ export const DashboardApp = {
             :selected-paths="store.state.selectedPaths"
             :loading="store.state.loading"
             @toggle-selected="store.toggleSelected($event)"
+            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
+            @copy="copyText"
+          />
+        </div>
+      </div>
+    </div>
+  `,
+}
+lected="store.toggleSelected($event)"
             @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
             @copy="copyText"
           />

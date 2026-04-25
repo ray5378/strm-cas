@@ -19,15 +19,16 @@ type ProgressInfo struct {
 }
 
 type RuntimeStore struct {
-	mu         sync.RWMutex
-	running    bool
-	startedAt  string
-	endedAt    string
-	current    *ProgressInfo
-	active     map[string]ProgressInfo
-	downloaded []ProgressInfo
-	completed  []STRMProcessResult
-	maxHistory int
+	mu               sync.RWMutex
+	running          bool
+	gracefulStopping bool
+	startedAt        string
+	endedAt          string
+	current          *ProgressInfo
+	active           map[string]ProgressInfo
+	downloaded       []ProgressInfo
+	completed        []STRMProcessResult
+	maxHistory       int
 }
 
 func NewRuntimeStore(maxHistory int) *RuntimeStore {
@@ -41,6 +42,7 @@ func (r *RuntimeStore) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.running = false
+	r.gracefulStopping = false
 	r.startedAt = ""
 	r.endedAt = ""
 	r.current = nil
@@ -53,6 +55,7 @@ func (r *RuntimeStore) MarkStarted() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.running = true
+	r.gracefulStopping = false
 	r.startedAt = time.Now().Format(time.RFC3339)
 	r.endedAt = ""
 	r.current = nil
@@ -65,9 +68,22 @@ func (r *RuntimeStore) MarkFinished() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.running = false
+	r.gracefulStopping = false
 	r.endedAt = time.Now().Format(time.RFC3339)
 	r.current = nil
 	r.active = make(map[string]ProgressInfo)
+}
+
+func (r *RuntimeStore) SetGracefulStopping(v bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gracefulStopping = v
+}
+
+func (r *RuntimeStore) IsGracefulStopping() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.gracefulStopping
 }
 
 func (r *RuntimeStore) SetCurrent(p ProgressInfo) {
@@ -111,14 +127,15 @@ func (r *RuntimeStore) AddCompleted(res STRMProcessResult) {
 }
 
 type RuntimeSnapshot struct {
-	Running         bool           `json:"running"`
-	StartedAt       string         `json:"started_at,omitempty"`
-	EndedAt         string         `json:"ended_at,omitempty"`
-	Current         *ProgressInfo  `json:"current,omitempty"`
-	ActiveCount     int            `json:"active_count"`
-	ActiveItems     []ProgressInfo `json:"active_items,omitempty"`
-	DownloadedCount int            `json:"downloaded_count"`
-	CompletedCount  int            `json:"completed_count"`
+	Running          bool           `json:"running"`
+	GracefulStopping bool           `json:"graceful_stopping"`
+	StartedAt        string         `json:"started_at,omitempty"`
+	EndedAt          string         `json:"ended_at,omitempty"`
+	Current          *ProgressInfo  `json:"current,omitempty"`
+	ActiveCount      int            `json:"active_count"`
+	ActiveItems      []ProgressInfo `json:"active_items,omitempty"`
+	DownloadedCount  int            `json:"downloaded_count"`
+	CompletedCount   int            `json:"completed_count"`
 }
 
 func (r *RuntimeStore) Snapshot() RuntimeSnapshot {
@@ -140,14 +157,15 @@ func (r *RuntimeStore) Snapshot() RuntimeSnapshot {
 		activeItems = activeItems[:8]
 	}
 	return RuntimeSnapshot{
-		Running:         r.running,
-		StartedAt:       r.startedAt,
-		EndedAt:         r.endedAt,
-		Current:         cur,
-		ActiveCount:     len(r.active),
-		ActiveItems:     append([]ProgressInfo(nil), activeItems...),
-		DownloadedCount: len(r.downloaded),
-		CompletedCount:  len(r.completed),
+		Running:          r.running,
+		GracefulStopping: r.gracefulStopping,
+		StartedAt:        r.startedAt,
+		EndedAt:          r.endedAt,
+		Current:          cur,
+		ActiveCount:      len(r.active),
+		ActiveItems:      append([]ProgressInfo(nil), activeItems...),
+		DownloadedCount:  len(r.downloaded),
+		CompletedCount:   len(r.completed),
 	}
 }
 
