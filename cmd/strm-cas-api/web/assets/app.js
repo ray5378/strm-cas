@@ -71,6 +71,7 @@ const root = {
       const detail = e.target?.dataset?.detail
       try {
         if (detail) { await store.loadDetail(decodeURIComponent(detail)); rerender() }
+        if (retry) { await api.retryTask(decodeURIComponent(retry)); await store.refreshAll(); rerender() }
         if (act === 'scan') { await store.startScan(); await store.refreshAll(); rerender() }
         if (act === 'refresh') { await store.refreshAll(); rerender() }
         if (act === 'clear-db-step1') { confirmClear = true; rerender() }
@@ -95,5 +96,8 @@ const root = {
 function rerender() { document.querySelector('#app').innerHTML = root.render(); root.bind(document.querySelector('#app')) }
 function renderDetail(obj) { return Object.entries(obj).map(([k,v]) => `<div><strong>${escapeHtml(k)}:</strong> ${escapeHtml(typeof v === 'string' ? v : JSON.stringify(v, null, 2))}</div>`).join('') }
 function escapeHtml(s='') { return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;') }
+
+createApp(root).mount('#app')
+t;') }
 
 createApp(root).mount('#app')

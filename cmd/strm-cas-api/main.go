@@ -28,7 +28,7 @@ type app struct {
 }
 
 func main() {
-	listen := envOr("STRM_CAS_LISTEN", ":8096")
+	listen := envOr("STRM_CAS_LISTEN", ":18457")
 	cfg := cas.STRMProcessOptions{
 		STRMRoot:        envOr("STRM_CAS_STRM_ROOT", "/strm"),
 		CacheDir:        envOr("STRM_CAS_CACHE_DIR", "/cache"),
@@ -44,7 +44,14 @@ func main() {
 			cfg.HTTPTimeout = d
 		}
 	}
-	app := &app{cfg: cfg, runtime: cas.NewRuntimeStore(1000)}
+
+	db, err := cas.OpenStateDB(cfg.DBPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	app := &app{cfg: cfg, runtime: cas.NewRuntimeStore(1000), db: db}
 	webSub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -58,6 +65,7 @@ func main() {
 	mux.HandleFunc("/api/runtime/downloaded", app.handleRuntimeDownloaded)
 	mux.HandleFunc("/api/runtime/completed", app.handleRuntimeCompleted)
 	mux.HandleFunc("/api/scan/start", app.handleScanStart)
+	mux.HandleFunc("/api/tasks/retry", app.handleTaskRetry)
 	mux.HandleFunc("/api/db/clear", app.handleDBClear)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -73,13 +81,12 @@ func main() {
 }
 
 func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
-	jobs, db, err := a.openCurrent()
+	jobs, err := a.currentJobs()
 	if err != nil {
 		writeErr(w, err, 500)
 		return
 	}
-	defer closeDB(db)
-	stats, err := cas.ComputeStats(db, jobs)
+	stats, err := cas.ComputeStats(a.db, jobs)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -88,14 +95,13 @@ func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleRecords(w http.ResponseWriter, r *http.Request) {
-	jobs, db, err := a.openCurrent()
+	jobs, err := a.currentJobs()
 	if err != nil {
 		writeErr(w, err, 500)
 		return
 	}
-	defer closeDB(db)
 	page, size := parsePage(r), parsePageSize(r)
-	result, err := cas.ListRecords(db, jobs, cas.QueryOptions{Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search"), Page: page, PageSize: size})
+	result, err := cas.ListRecords(a.db, jobs, cas.QueryOptions{Status: r.URL.Query().Get("status"), Search: r.URL.Query().Get("search"), Page: page, PageSize: size})
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -104,18 +110,12 @@ func (a *app) handleRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleRecordDetail(w http.ResponseWriter, r *http.Request) {
-	_, db, err := a.openCurrent()
-	if err != nil {
-		writeErr(w, err, 500)
-		return
-	}
-	defer closeDB(db)
 	p := r.URL.Query().Get("path")
 	if p == "" {
 		writeErr(w, fmt.Errorf("missing path"), 400)
 		return
 	}
-	rec, err := cas.GetRecord(db, p)
+	rec, err := cas.GetRecord(a.db, p)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
@@ -154,19 +154,98 @@ func (a *app) handleScanStart(w http.ResponseWriter, r *http.Request) {
 	cfg := a.cfg
 	cfg.OnProgress = func(p cas.ProgressInfo) {
 		a.runtime.SetCurrent(p)
-		if p.Stage == "downloaded" {
+		if p.Stage == "downloaded" || p.Stage == "cache_recovered" {
 			a.runtime.AddDownloaded(p)
 		}
 	}
 	cfg.OnResult = func(res cas.STRMProcessResult) {
 		a.runtime.AddCompleted(res)
+		_ = cas.UpdateResult(a.db, res)
 	}
 	go func() {
 		defer a.runtime.MarkFinished()
+		defer a.mu.Unlock()
 		_, _ = cas.ProcessSTRMTree(cfg)
 	}()
-	a.mu.Unlock()
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (a *app) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	a.mu.Lock()
+	if a.runtime.Snapshot().Running {
+		a.mu.Unlock()
+		writeErr(w, fmt.Errorf("scan already running"), 409)
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		a.mu.Unlock()
+		writeErr(w, fmt.Errorf("invalid request body"), 400)
+		return
+	}
+	if req.Path == "" {
+		a.mu.Unlock()
+		writeErr(w, fmt.Errorf("missing path"), 400)
+		return
+	}
+	jobs, err := a.currentJobs()
+	if err != nil {
+		a.mu.Unlock()
+		writeErr(w, err, 500)
+		return
+	}
+	var selected *cas.STRMJob
+	for i := range jobs {
+		if jobs[i].STRMPath == req.Path {
+			selected = &jobs[i]
+			break
+		}
+	}
+	if selected == nil {
+		a.mu.Unlock()
+		writeErr(w, fmt.Errorf("task not found"), 404)
+		return
+	}
+	cfg := a.cfg
+	a.runtime.MarkStarted()
+	cfg.OnProgress = func(p cas.ProgressInfo) {
+		a.runtime.SetCurrent(p)
+		if p.Stage == "downloaded" || p.Stage == "cache_recovered" {
+			a.runtime.AddDownloaded(p)
+		}
+	}
+	cfg.OnResult = func(res cas.STRMProcessResult) {
+		a.runtime.AddCompleted(res)
+		_ = cas.UpdateResult(a.db, res)
+	}
+	job := *selected
+	go func() {
+		defer a.runtime.MarkFinished()
+		defer a.mu.Unlock()
+		client := &http.Client{Timeout: cfg.HTTPTimeout}
+		res, err := cas.ProcessSingleSTRM(client, cfg, job)
+		if err != nil {
+			status := "failed"
+			if job.ParseError != "" {
+				status = "exception"
+			}
+			failed := cas.STRMProcessResult{Job: job, Status: status, Message: err.Error()}
+			a.runtime.AddCompleted(failed)
+			_ = cas.UpdateResult(a.db, failed)
+			return
+		}
+		if res != nil {
+			a.runtime.AddCompleted(*res)
+			_ = cas.UpdateResult(a.db, *res)
+		}
+	}()
+	writeJSON(w, map[string]any{"ok": true, "path": req.Path})
 }
 
 func (a *app) handleDBClear(w http.ResponseWriter, r *http.Request) {
@@ -185,23 +264,16 @@ func (a *app) handleDBClear(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-func (a *app) openCurrent() ([]cas.STRMJob, *bolt.DB, error) {
+func (a *app) currentJobs() ([]cas.STRMJob, error) {
 	jobs, err := cas.DiscoverSTRMJobs(a.cfg.STRMRoot)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	db, err := cas.OpenStateDB(a.cfg.DBPath)
-	if err != nil {
-		return nil, nil, err
+	if err := cas.SyncJobsToState(a.db, jobs); err != nil {
+		return nil, err
 	}
-	if err := cas.SyncJobsToState(db, jobs); err != nil {
-		_ = db.Close()
-		return nil, nil, err
-	}
-	return jobs, db, nil
+	return jobs, nil
 }
-
-func closeDB(c interface{ Close() error }) { _ = c.Close() }
 
 func parsePage(r *http.Request) int {
 	v, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -210,6 +282,7 @@ func parsePage(r *http.Request) int {
 	}
 	return v
 }
+
 func parsePageSize(r *http.Request) int {
 	v, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
 	if v <= 0 {
@@ -220,20 +293,24 @@ func parsePageSize(r *http.Request) int {
 	}
 	return v
 }
+
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
 	}
 	return def
 }
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
 func writeErr(w http.ResponseWriter, err error, code int) {
 	w.WriteHeader(code)
 	writeJSON(w, map[string]any{"error": err.Error()})
 }
+
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
