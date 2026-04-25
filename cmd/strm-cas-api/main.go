@@ -38,6 +38,7 @@ type app struct {
 	gracefulStopFlag bool
 	settingsMu       sync.RWMutex
 	settings         taskSettings
+	settingsPath     string
 }
 
 func main() {
@@ -68,11 +69,22 @@ func main() {
 	}
 	defer db.Close()
 
+	settingsPath := envOr("STRM_CAS_SETTINGS_PATH", "/data/strm-cas-settings.json")
+	initialSettings := taskSettings{Concurrency: concurrency, TotalRateLimit: int64(rateMB) * 1024 * 1024, TotalRateLimitMB: rateMB}
+	if saved, err := loadTaskSettings(settingsPath, initialSettings); err == nil {
+		initialSettings = saved
+		cfg.Concurrency = saved.Concurrency
+		cfg.TotalRateLimit = saved.TotalRateLimit
+	} else {
+		log.Printf("load settings skipped: %v", err)
+	}
+
 	app := &app{
-		cfg:      cfg,
-		runtime:  cas.NewRuntimeStore(1000),
-		db:       db,
-		settings: taskSettings{Concurrency: concurrency, TotalRateLimit: int64(rateMB) * 1024 * 1024, TotalRateLimitMB: rateMB},
+		cfg:          cfg,
+		runtime:      cas.NewRuntimeStore(1000),
+		db:           db,
+		settings:     initialSettings,
+		settingsPath: settingsPath,
 	}
 	webSub, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -161,8 +173,13 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if req.TotalRateLimitMB < 0 {
 			req.TotalRateLimitMB = 0
 		}
+		newSettings := taskSettings{Concurrency: req.Concurrency, TotalRateLimitMB: req.TotalRateLimitMB, TotalRateLimit: int64(req.TotalRateLimitMB) * 1024 * 1024}
+		if err := saveTaskSettings(a.settingsPath, newSettings); err != nil {
+			writeErr(w, err, 500)
+			return
+		}
 		a.settingsMu.Lock()
-		a.settings = taskSettings{Concurrency: req.Concurrency, TotalRateLimitMB: req.TotalRateLimitMB, TotalRateLimit: int64(req.TotalRateLimitMB) * 1024 * 1024}
+		a.settings = newSettings
 		a.cfg.Concurrency = req.Concurrency
 		a.cfg.TotalRateLimit = int64(req.TotalRateLimitMB) * 1024 * 1024
 		a.settingsMu.Unlock()
@@ -657,14 +674,55 @@ func envOrInt(k string, def int) int {
 	}
 	return def
 }
+
+func loadTaskSettings(path string, fallback taskSettings) (taskSettings, error) {
+	if path == "" {
+		return fallback, nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fallback, nil
+		}
+		return fallback, err
+	}
+	var s taskSettings
+	if err := json.Unmarshal(body, &s); err != nil {
+		return fallback, err
+	}
+	if s.Concurrency <= 0 {
+		s.Concurrency = fallback.Concurrency
+	}
+	if s.TotalRateLimitMB < 0 {
+		s.TotalRateLimitMB = 0
+	}
+	s.TotalRateLimit = int64(s.TotalRateLimitMB) * 1024 * 1024
+	return s, nil
+}
+
+func saveTaskSettings(path string, s taskSettings) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
+}
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
 func writeErr(w http.ResponseWriter, err error, code int) {
 	w.WriteHeader(code)
 	writeJSON(w, map[string]any{"error": err.Error()})
 }
+
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

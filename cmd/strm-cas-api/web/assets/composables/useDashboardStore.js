@@ -119,7 +119,7 @@ export function useDashboardStore() {
   }
   async function refreshAll() {
     return wrap(async () => {
-      await Promise.all([refreshOverview(), refreshRecords(), refreshDownloaded(), refreshCompleted()])
+      await Promise.all([refreshOverview(), refreshSettings(), refreshRecords(), refreshDownloaded(), refreshCompleted()])
     }, 'refreshAll')
   }
   async function loadDetail(path) {
