@@ -178,8 +178,10 @@ func (r *RuntimeStore) Snapshot() RuntimeSnapshot {
 		cur = &c
 	}
 	activeItems := make([]ProgressInfo, 0, len(r.active))
+	var totalSpeed int64
 	for _, item := range r.active {
 		activeItems = append(activeItems, item)
+		totalSpeed += item.SpeedBytesPerSec
 	}
 	sort.Slice(activeItems, func(i, j int) bool {
 		return activeItems[i].UpdatedAt > activeItems[j].UpdatedAt

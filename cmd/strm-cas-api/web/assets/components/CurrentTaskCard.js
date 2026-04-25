@@ -46,6 +46,7 @@ export const CurrentTaskCard = {
       <div class="toolbar" style="justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <strong>当前任务</strong>
         <span class="muted">活跃任务数：{{ activeCount || 0 }}</span>
+        <span class="muted">当前总速度：{{ formatSpeed(totalSpeedBytesPerSec) }}</span>
       </div>
       <template v-if="current">
         <div class="mono">{{ current.job?.strm_path || '' }}</div>
