@@ -34,33 +34,17 @@ export const CurrentTaskCard = {
     current: { type: Object, default: null },
     activeCount: { type: Number, default: 0 },
     activeItems: { type: Array, default: () => [] },
+    totalSpeedBytesPerSec: { type: Number, default: 0 },
   },
   methods: { stageText, formatBytes, formatSpeed, formatETA, progressPercentOf },
-  computed: {
-    progressPercent() {
-      return progressPercentOf(this.current)
-    },
-  },
   template: `
     <div class="card">
       <div class="toolbar" style="justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-        <strong>当前任务</strong>
+        <strong>活跃任务</strong>
         <span class="muted">活跃任务数：{{ activeCount || 0 }}</span>
         <span class="muted">当前总速度：{{ formatSpeed(totalSpeedBytesPerSec) }}</span>
       </div>
-      <template v-if="current">
-        <div class="mono">{{ current.job?.strm_path || '' }}</div>
-        <div class="row"><span>{{ stageText(current.stage) }}</span><span>{{ current.file_name || '' }}</span><span>{{ formatBytes(current.downloaded_bytes || 0) }}<template v-if="current.total_bytes"> / {{ formatBytes(current.total_bytes) }}</template></span></div>
-        <div class="row"><span class="muted">当前速度：{{ formatSpeed(current.speed_bytes_per_sec) }}</span><span class="muted">ETA：{{ formatETA(current.eta_seconds) }}</span></div>
-        <div v-if="current.total_bytes" class="section">
-          <div class="progress-meta"><span>当前主任务进度</span><strong>{{ progressPercent }}%</strong></div>
-          <div class="progress-bar"><div class="progress-inner" :style="{ width: progressPercent + '%' }"></div></div>
-        </div>
-        <div class="muted">{{ current.message || '' }}</div>
-      </template>
-      <div v-else class="muted">暂无</div>
       <div v-if="activeItems.length" class="section">
-        <strong>活跃任务列表</strong>
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
           <div v-for="(item, idx) in activeItems" :key="idx" class="card">
             <div class="mono">{{ item.job?.strm_path || '-' }}</div>
@@ -74,6 +58,7 @@ export const CurrentTaskCard = {
           </div>
         </div>
       </div>
+      <div v-else class="muted">当前没有活跃任务</div>
     </div>
   `,
 }
