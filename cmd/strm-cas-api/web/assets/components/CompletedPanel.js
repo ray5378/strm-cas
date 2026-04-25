@@ -10,8 +10,17 @@ export const CompletedPanel = {
     status: { type: String, default: '' },
     page: { type: Number, default: 1 },
     loading: { type: Object, default: () => ({}) },
+    errorMessage: { type: String, default: '' },
   },
   emits: ['set-status', 'retry', 'page-prev', 'page-next', 'page-jump'],
+  computed: {
+    emptyTitle() {
+      return this.status ? '当前筛选下没有结果' : '暂无已完成任务'
+    },
+    emptyMessage() {
+      return this.status ? '可以切换状态筛选，或先启动任务。' : '任务开始执行后，这里会展示最近完成的结果。'
+    },
+  },
   methods: { statusText },
   template: `
     <DataTableCard
@@ -21,6 +30,10 @@ export const CompletedPanel = {
       :loading="loading.completed"
       section-class="section"
       :empty-colspan="4"
+      :empty-title="emptyTitle"
+      :empty-message="emptyMessage"
+      :error-message="errorMessage"
+      :hide-pager-when-empty="true"
       @prev="$emit('page-prev')"
       @next="$emit('page-next')"
       @jump="$emit('page-jump', $event)"
@@ -33,7 +46,7 @@ export const CompletedPanel = {
       </template>
       <template #thead><tr><th>状态</th><th>strm</th><th>cas</th><th>消息</th></tr></template>
       <template #rows>
-        <EmptyState v-if="!(completed.items || []).length" :colspan="4" />
+        <EmptyState v-if="!(completed.items || []).length" :colspan="4" :title="emptyTitle" :message="emptyMessage" />
         <tr v-for="item in (completed.items || [])" :key="(item.job?.strm_path || '') + (item.cas_path || '')">
           <td><span class="badge" :class="item.status || 'pending'">{{ statusText(item.status) }}</span></td>
           <td class="mono">{{ item.job?.strm_path || '' }}</td>

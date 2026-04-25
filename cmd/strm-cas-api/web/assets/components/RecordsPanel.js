@@ -9,10 +9,20 @@ export const RecordsPanel = {
     records: { type: Object, default: () => ({ total: 0, items: [] }) },
     filters: { type: Object, required: true },
     loading: { type: Object, default: () => ({}) },
+    errorMessage: { type: String, default: '' },
   },
   emits: ['set-status', 'apply-search', 'detail', 'retry', 'page-prev', 'page-next', 'page-jump'],
   data() {
     return { searchValue: this.filters.search || '' }
+  },
+  computed: {
+    emptyTitle() {
+      return this.filters.search || this.filters.status ? '没有匹配结果' : '暂无数据库记录'
+    },
+    emptyMessage() {
+      if (this.filters.search || this.filters.status) return '试试调整筛选条件或先执行扫描。'
+      return '先点击“扫描 /strm”，把当前任务同步进数据库。'
+    },
   },
   watch: {
     'filters.search'(v) { this.searchValue = v || '' },
@@ -25,6 +35,10 @@ export const RecordsPanel = {
       :page-size="filters.page_size || 10"
       :loading="loading.records"
       :empty-colspan="5"
+      :empty-title="emptyTitle"
+      :empty-message="emptyMessage"
+      :error-message="errorMessage"
+      :hide-pager-when-empty="true"
       @prev="$emit('page-prev')"
       @next="$emit('page-next')"
       @jump="$emit('page-jump', $event)"
@@ -43,7 +57,7 @@ export const RecordsPanel = {
         <tr><th>状态</th><th>strm</th><th>cas</th><th>最后结果</th><th></th></tr>
       </template>
       <template #rows>
-        <EmptyState v-if="!(records.items || []).length" :colspan="5" />
+        <EmptyState v-if="!(records.items || []).length" :colspan="5" :title="emptyTitle" :message="emptyMessage" />
         <tr v-for="item in (records.items || [])" :key="item.strm_path">
           <td><span class="badge" :class="item.status || 'pending'">{{ statusText(item.status) }}</span></td>
           <td class="mono">{{ item.strm_path }}</td>

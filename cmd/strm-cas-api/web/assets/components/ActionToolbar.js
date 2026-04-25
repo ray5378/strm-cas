@@ -8,8 +8,10 @@ export const ActionToolbar = {
     startMode: { type: String, default: 'pending' },
     confirmClear: Boolean,
     loading: { type: Object, default: () => ({}) },
+    autoRefreshEnabled: { type: Boolean, default: true },
+    autoRefreshLabel: { type: String, default: '空闲 15s / 运行中 3s' },
   },
-  emits: ['scan', 'start', 'retry-failed', 'refresh', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel'],
+  emits: ['scan', 'start', 'retry-failed', 'refresh', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel', 'toggle-auto-refresh'],
   template: `
     <div class="section card">
       <div class="toolbar">
@@ -20,6 +22,8 @@ export const ActionToolbar = {
       <div class="toolbar section">
         <button @click="$emit('retry-failed')" :disabled="running || loading.retryFailed" :class="{ 'is-loading': loading.retryFailed }">{{ loading.retryFailed ? '重试中...' : '批量重试失败任务' }}</button>
         <button @click="$emit('refresh')" :disabled="loading.refreshAll" :class="{ 'is-loading': loading.refreshAll }">{{ loading.refreshAll ? '刷新中...' : '刷新' }}</button>
+        <button @click="$emit('toggle-auto-refresh')" class="secondary">自动刷新：{{ autoRefreshEnabled ? '开' : '关' }}</button>
+        <span class="muted">{{ autoRefreshLabel }}</span>
         <template v-if="!confirmClear">
           <button @click="$emit('clear-step1')" :disabled="running || loading.clearDB" class="danger">清理数据库</button>
         </template>

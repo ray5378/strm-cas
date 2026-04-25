@@ -38,4 +38,7 @@ th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; vert
 .toast.error { background: #991b1b; }
 .toast.info { background: #1d4ed8; }
 .panel-loading { opacity: .65; pointer-events: none; }
+.empty-state { padding: 24px 8px; text-align: center; }
+.empty-state.error { color: #991b1b; }
+.empty-title { font-weight: 700; margin-bottom: 6px; }
 @media (max-width: 1100px){ .grid, .main-grid { grid-template-columns: 1fr; } }
