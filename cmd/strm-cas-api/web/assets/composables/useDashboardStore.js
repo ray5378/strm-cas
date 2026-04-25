@@ -137,6 +137,7 @@ export function useDashboardStore() {
   async function reconcileDB() {
     return wrap(async () => {
       const res = await dashboardService.reconcileDB()
+      state.reconcileSummary = res || null
       await refreshAll()
       return res
     }, 'reconcileDB')

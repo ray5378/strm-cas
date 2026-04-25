@@ -36,8 +36,8 @@ export const DashboardApp = {
         toast.success(res.stopped ? '当前任务已发出停止请求' : '当前没有运行中的任务')
         return
       }
-      if (res && res.summary && typeof res.summary.total_strm === 'number') {
-        const s = res.summary
+      if (res && typeof res.total_strm === 'number') {
+        const s = res
         toast.success(`数据库已纠正：STRM ${s.total_strm}，CAS ${s.total_cas}，done ${s.done}，pending ${s.pending}，exception ${s.exception}，更新 ${s.updated}，删除陈旧 ${s.deleted_stale}`)
         return
       }

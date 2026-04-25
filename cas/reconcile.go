@@ -13,16 +13,28 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+type ReconcileDetail struct {
+	Action      string `json:"action"`
+	STRMPath    string `json:"strm_path,omitempty"`
+	RelativeDir string `json:"relative_dir,omitempty"`
+	OldStatus   string `json:"old_status,omitempty"`
+	NewStatus   string `json:"new_status,omitempty"`
+	MatchMode   string `json:"match_mode,omitempty"`
+	CASPath     string `json:"cas_path,omitempty"`
+	Message     string `json:"message,omitempty"`
+}
+
 type ReconcileSummary struct {
-	TotalSTRM       int `json:"total_strm"`
-	TotalCAS        int `json:"total_cas"`
-	Done            int `json:"done"`
-	Pending         int `json:"pending"`
-	Exception       int `json:"exception"`
-	Updated         int `json:"updated"`
-	DeletedStale    int `json:"deleted_stale"`
-	MatchedExisting int `json:"matched_existing"`
-	MatchedInferred int `json:"matched_inferred"`
+	TotalSTRM       int               `json:"total_strm"`
+	TotalCAS        int               `json:"total_cas"`
+	Done            int               `json:"done"`
+	Pending         int               `json:"pending"`
+	Exception       int               `json:"exception"`
+	Updated         int               `json:"updated"`
+	DeletedStale    int               `json:"deleted_stale"`
+	MatchedExisting int               `json:"matched_existing"`
+	MatchedInferred int               `json:"matched_inferred"`
+	Details         []ReconcileDetail `json:"details,omitempty"`
 }
 
 func ReconcileStateWithFS(db *bolt.DB, strmRoot, downloadRoot string) (*ReconcileSummary, error) {
@@ -41,7 +53,7 @@ func ReconcileStateWithFS(db *bolt.DB, strmRoot, downloadRoot string) (*Reconcil
 	for _, job := range jobs {
 		jobCounts[job.RelativeDir]++
 	}
-	summary := &ReconcileSummary{TotalSTRM: len(jobs), TotalCAS: totalCAS}
+	summary := &ReconcileSummary{TotalSTRM: len(jobs), TotalCAS: totalCAS, Details: make([]ReconcileDetail, 0, len(jobs))}
 	now := time.Now().Format(time.RFC3339)
 	err = db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(stateBucket))
@@ -52,32 +64,48 @@ func ReconcileStateWithFS(db *bolt.DB, strmRoot, downloadRoot string) (*Reconcil
 		for _, job := range jobs {
 			current[job.STRMPath] = job
 		}
-		toDelete := make([]string, 0)
-		if err := b.ForEach(func(k, _ []byte) error {
-			if _, ok := current[string(k)]; !ok {
-				toDelete = append(toDelete, string(k))
+		staleRecords := make([]StateRecord, 0)
+		if err := b.ForEach(func(k, raw []byte) error {
+			key := string(k)
+			if _, ok := current[key]; ok {
+				return nil
 			}
+			rec := StateRecord{STRMPath: key}
+			if raw != nil {
+				_ = json.Unmarshal(raw, &rec)
+			}
+			staleRecords = append(staleRecords, rec)
 			return nil
 		}); err != nil {
 			return err
 		}
-		for _, key := range toDelete {
-			if err := b.Delete([]byte(key)); err != nil {
+		for _, rec := range staleRecords {
+			if err := b.Delete([]byte(rec.STRMPath)); err != nil {
 				return err
 			}
 			summary.DeletedStale++
+			summary.Details = append(summary.Details, ReconcileDetail{
+				Action:      "delete_stale",
+				STRMPath:    rec.STRMPath,
+				RelativeDir: rec.RelativeDir,
+				OldStatus:   rec.Status,
+				Message:     "record removed because .strm no longer exists",
+			})
 		}
 		for _, job := range jobs {
-			rec := StateRecord{}
+			oldRec := StateRecord{}
 			if raw := b.Get([]byte(job.STRMPath)); raw != nil {
-				_ = json.Unmarshal(raw, &rec)
+				_ = json.Unmarshal(raw, &oldRec)
 			}
-			before, _ := json.Marshal(rec)
+			rec := oldRec
+			before, _ := json.Marshal(oldRec)
 			rec.STRMPath = job.STRMPath
 			rec.URL = job.URL
 			rec.RelativeDir = job.RelativeDir
 			rec.LastSeenAt = now
 			rec.LastProcessedAt = now
+
+			detail := ReconcileDetail{STRMPath: job.STRMPath, RelativeDir: job.RelativeDir, OldStatus: oldRec.Status}
 			if job.ParseError != "" {
 				rec.Status = "exception"
 				rec.LastMessage = job.ParseError
@@ -85,7 +113,10 @@ func ReconcileStateWithFS(db *bolt.DB, strmRoot, downloadRoot string) (*Reconcil
 				rec.DownloadPath = ""
 				rec.Size = 0
 				summary.Exception++
-			} else if casPath, mode := matchExistingCAS(rec, job, casIndex, jobCounts); casPath != "" {
+				detail.Action = "mark_exception"
+				detail.NewStatus = rec.Status
+				detail.Message = job.ParseError
+			} else if casPath, mode := matchExistingCAS(oldRec, job, casIndex, jobCounts); casPath != "" {
 				rec.Status = "done"
 				rec.LastMessage = "reconciled from existing .cas"
 				rec.CASPath = casPath
@@ -102,6 +133,11 @@ func ReconcileStateWithFS(db *bolt.DB, strmRoot, downloadRoot string) (*Reconcil
 					summary.MatchedInferred++
 				}
 				summary.Done++
+				detail.Action = "mark_done"
+				detail.NewStatus = rec.Status
+				detail.MatchMode = mode
+				detail.CASPath = casPath
+				detail.Message = rec.LastMessage
 			} else {
 				rec.Status = "pending"
 				rec.LastMessage = "reconciled: no corresponding .cas found"
@@ -109,10 +145,18 @@ func ReconcileStateWithFS(db *bolt.DB, strmRoot, downloadRoot string) (*Reconcil
 				rec.DownloadPath = ""
 				rec.Size = 0
 				summary.Pending++
+				detail.Action = "mark_pending"
+				detail.NewStatus = rec.Status
+				detail.Message = rec.LastMessage
 			}
 			after, _ := json.Marshal(rec)
-			if string(before) != string(after) {
+			changed := string(before) != string(after)
+			if changed {
 				summary.Updated++
+				if detail.OldStatus == "" {
+					detail.OldStatus = "(empty)"
+				}
+				summary.Details = append(summary.Details, detail)
 			}
 			if err := b.Put([]byte(job.STRMPath), after); err != nil {
 				return err
