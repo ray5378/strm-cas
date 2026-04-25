@@ -1,10 +1,9 @@
 import { PagerControl } from './PagerControl.js'
+import { FilterTabs } from './FilterTabs.js'
 import { statusText } from './ui.js'
 
-const FILTERS = [['','全部'], ['pending','未处理'], ['done','已完成'], ['failed','失败'], ['exception','异常'], ['skipped','已跳过']]
-
 export const CompletedPanel = {
-  components: { PagerControl },
+  components: { PagerControl, FilterTabs },
   props: {
     completed: { type: Object, default: () => ({ total: 0, items: [] }) },
     status: { type: String, default: '' },
@@ -14,9 +13,9 @@ export const CompletedPanel = {
   methods: { statusText },
   template: `
     <div class="card section">
-      <div class="toolbar">
+      <div class="toolbar records-toolbar">
         <strong>已完成任务</strong>
-        <button v-for="([value, label], idx) in ${JSON.stringify(FILTERS)}" :key="idx" @click="$emit('set-status', value)" :class="{ active: status === value }">{{ label }}</button>
+        <FilterTabs :model-value="status" @update:modelValue="$emit('set-status', $event)" />
       </div>
       <table>
         <thead><tr><th>状态</th><th>strm</th><th>cas</th><th>消息</th></tr></thead>

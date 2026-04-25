@@ -1,10 +1,9 @@
 import { PagerControl } from './PagerControl.js'
+import { FilterTabs } from './FilterTabs.js'
 import { statusText } from './ui.js'
 
-const FILTERS = [['','全部'], ['pending','未处理'], ['done','已完成'], ['failed','失败'], ['exception','异常'], ['skipped','已跳过']]
-
 export const RecordsPanel = {
-  components: { PagerControl },
+  components: { PagerControl, FilterTabs },
   props: {
     records: { type: Object, default: () => ({ total: 0, items: [] }) },
     filters: { type: Object, required: true },
@@ -19,11 +18,13 @@ export const RecordsPanel = {
   methods: { statusText },
   template: `
     <div class="card">
-      <div class="toolbar">
+      <div class="toolbar records-toolbar">
         <strong>数据库记录</strong>
-        <button v-for="([value, label], idx) in ${JSON.stringify(FILTERS)}" :key="idx" @click="$emit('set-status', value)" :class="{ active: filters.status === value }">{{ label }}</button>
-        <input v-model="searchValue" placeholder="搜索路径 / URL / 错误" />
-        <button @click="$emit('apply-search', searchValue)">筛选</button>
+        <FilterTabs :model-value="filters.status" @update:modelValue="$emit('set-status', $event)" />
+        <div class="row grow">
+          <input v-model="searchValue" placeholder="搜索路径 / URL / 错误" class="grow-input" />
+          <button @click="$emit('apply-search', searchValue)">筛选</button>
+        </div>
       </div>
       <table>
         <thead><tr><th>状态</th><th>strm</th><th>cas</th><th>最后结果</th><th></th></tr></thead>

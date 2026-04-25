@@ -55,39 +55,38 @@ docker compose run --rm strm-cas-job strm-cas -scan-strm
 
 ## 二、持久化目录说明
 
-容器内会使用这三个目录：
+容器内统一使用 `/data` 作为根目录：
 
-- `/strm`：放 `.strm` 文件
-- `/cache`：放未完成下载的临时文件 `.part`
-- `/download`：放状态库、日志、最终生成的 `.cas`
+- `/data/strm`：放 `.strm` 文件
+- `/data/cache`：放未完成下载的临时文件 `.part`
+- `/data/download`：放最终生成的 `.cas`
+- `/data/strm-cas.db`：状态数据库
+- `/data/strm-cas-summary.json`：汇总日志
 
 ### docker-compose 默认挂载
 
 ```yaml
 volumes:
-  - ./data/strm:/strm
-  - ./data/cache:/cache
-  - ./data/download:/download
+  - ./data:/data
 ```
 
 ### 推荐说明
 
-#### 1. `/strm`
-建议挂载你实际存放 `.strm` 的目录。
+#### 1. `/data/strm`
+建议放你实际存放 `.strm` 的目录。
 
-#### 2. `/cache`
-建议单独持久化。
+#### 2. `/data/cache`
+建议持久化。
 这样容器重启后，未完成下载还有机会继续续传。
 
-#### 3. `/download`
+#### 3. `/data/download`
 必须持久化。
-因为这里会保存：
+因为这里会保存最终生成的 `.cas`。
 
-- 生成出来的 `.cas`
-- `strm-cas.db`
-- `strm-cas-summary.json`
+#### 4. `/data/strm-cas.db` 与 `/data/strm-cas-summary.json`
+数据库和日志现在默认放在 `/data` 根目录，和业务产物目录分开，更符合常见项目的目录组织。
 
-如果这个目录不持久化：
+如果 `./data` 不持久化：
 - 数据库会丢
 - `.cas` 会丢
 - 日志会丢
@@ -113,7 +112,7 @@ volumes:
 ### 默认状态库
 
 ```text
-/download/strm-cas.db
+/data/strm-cas.db
 ```
 
 ### 查看统计
@@ -154,7 +153,7 @@ http://127.0.0.1:18457/
 
 页面支持：
 
-- 展示 `/strm` 总 `.strm` 数
+- 展示 `/data/strm` 总 `.strm` 数
 - 展示还没处理数量
 - 展示已生成 `.cas` 数量
 - 展示失败数量
@@ -163,20 +162,24 @@ http://127.0.0.1:18457/
 - 支持状态筛选
 - 支持搜索
 - 支持详情读取
-- 支持“开始扫描 /strm”按钮
+- 支持“扫描 /data/strm”按钮
+- 支持“开始下载生成 CAS”范围选择
 - 支持前端清理数据库按钮（带二级确认）
 - 支持显示当前任务进度
 - 支持分页显示已下载任务
 - 支持分页显示已完成任务
+- 支持 toast 成功/失败提示
 
 ### 前端结构
 
-前端是按模块拆分的，不是巨石文件：
+前端现在按 Vue 模块拆分，主入口只保留挂载逻辑：
 
-- `cmd/strm-cas-api/web/assets/api.js`
-- `cmd/strm-cas-api/web/assets/store.js`
-- `cmd/strm-cas-api/web/assets/components.js`
-- `cmd/strm-cas-api/web/assets/app.js`
+- `cmd/strm-cas-api/web/assets/app.js`：入口
+- `cmd/strm-cas-api/web/assets/services/dashboardService.js`：API 服务层
+- `cmd/strm-cas-api/web/assets/composables/useDashboardStore.js`：业务状态
+- `cmd/strm-cas-api/web/assets/composables/useToast.js`：消息提示
+- `cmd/strm-cas-api/web/assets/components/*.js`：页面模块组件
+- `cmd/strm-cas-api/web/assets/vendor/vue.esm-browser.prod.js`：本地 Vue runtime
 
 ---
 
@@ -218,10 +221,38 @@ GET /api/runtime/downloaded?page=1&page_size=10
 GET /api/runtime/completed?page=1&page_size=10&status=done
 ```
 
-### 开始扫描
+### 扫描 /data/strm
 
 ```http
-POST /api/scan/start
+POST /api/scan/refresh
+```
+
+### 开始任务
+
+```http
+POST /api/tasks/start
+```
+
+请求体示例：
+
+```json
+{
+  "mode": "current_filter",
+  "status": "failed",
+  "search": "movie"
+}
+```
+
+### 重试单个失败任务
+
+```http
+POST /api/tasks/retry
+```
+
+### 批量重试失败任务
+
+```http
+POST /api/tasks/retry-failed
 ```
 
 ### 清理数据库
@@ -235,11 +266,11 @@ POST /api/db/clear
 ## 六、可配置环境变量
 
 - `STRM_CAS_LISTEN`，默认 `:18457`
-- `STRM_CAS_STRM_ROOT`，默认 `/strm`
-- `STRM_CAS_CACHE_DIR`，默认 `/cache`
-- `STRM_CAS_DOWNLOAD_DIR`，默认 `/download`
-- `STRM_CAS_DB_PATH`，默认 `/download/strm-cas.db`
-- `STRM_CAS_LOG_PATH`，默认 `/download/strm-cas-summary.json`
+- `STRM_CAS_STRM_ROOT`，默认 `/data/strm`
+- `STRM_CAS_CACHE_DIR`，默认 `/data/cache`
+- `STRM_CAS_DOWNLOAD_DIR`，默认 `/data/download`
+- `STRM_CAS_DB_PATH`，默认 `/data/strm-cas.db`
+- `STRM_CAS_LOG_PATH`，默认 `/data/strm-cas-summary.json`
 - `STRM_CAS_HTTP_TIMEOUT`，例如 `30m`
 
 ---

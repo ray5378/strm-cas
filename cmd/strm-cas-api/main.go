@@ -36,8 +36,8 @@ func main() {
 		Mode:            cas.Mode189PC,
 		UserAgent:       envOr("STRM_CAS_USER_AGENT", "strm-cas-api/1.0"),
 		SkipExistingCAS: true,
-		LogPath:         envOr("STRM_CAS_LOG_PATH", "/download/strm-cas-summary.json"),
-		DBPath:          envOr("STRM_CAS_DB_PATH", "/download/strm-cas.db"),
+		LogPath:         envOr("STRM_CAS_LOG_PATH", "/data/strm-cas-summary.json"),
+		DBPath:          envOr("STRM_CAS_DB_PATH", "/data/strm-cas.db"),
 	}
 	if timeoutStr := os.Getenv("STRM_CAS_HTTP_TIMEOUT"); timeoutStr != "" {
 		if d, err := time.ParseDuration(timeoutStr); err == nil {
