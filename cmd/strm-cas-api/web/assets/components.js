@@ -37,6 +37,7 @@ const STAGE_TEXT = {
   downloaded: '已下载',
   generating_cas: '生成 CAS',
   completed: '已完成',
+  cache_recovered: '缓存恢复',
 }
 
 export function stageText(stage='') {

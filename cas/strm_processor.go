@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,18 +86,15 @@ func ProcessSTRMTree(opts STRMProcessOptions) (*STRMProcessSummary, error) {
 		}
 	}
 	client := &http.Client{Timeout: opts.HTTPTimeout}
-	summary := &STRMProcessSummary{
-		StartedAt: startedAt.Format(time.RFC3339),
-		Results:   make([]STRMProcessResult, 0, len(jobs)),
-	}
+	summary := &STRMProcessSummary{StartedAt: startedAt.Format(time.RFC3339), Results: make([]STRMProcessResult, 0, len(jobs))}
 	for _, job := range jobs {
 		res, err := ProcessSingleSTRM(client, opts, job)
 		if err != nil {
-			failed := STRMProcessResult{
-				Job:     job,
-				Status:  "failed",
-				Message: err.Error(),
+			status := "failed"
+			if job.ParseError != "" {
+				status = "exception"
 			}
+			failed := STRMProcessResult{Job: job, Status: status, Message: err.Error()}
 			summary.Results = append(summary.Results, failed)
 			if db != nil {
 				_ = UpdateResult(db, failed)
@@ -182,6 +180,12 @@ func ExtractSTRMLink(body []byte) (string, error) {
 }
 
 func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob) (*STRMProcessResult, error) {
+	if job.ParseError != "" {
+		return nil, fmt.Errorf(job.ParseError)
+	}
+	if strings.TrimSpace(job.URL) == "" {
+		return nil, fmt.Errorf("empty strm url")
+	}
 	if client == nil {
 		client = &http.Client{Timeout: opts.HTTPTimeout}
 	}
@@ -198,7 +202,8 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 		return nil, err
 	}
 
-	nameHint := resolveDownloadName(job, nil)
+	meta, _ := probeRemoteMeta(client, job, opts.UserAgent)
+	nameHint := resolveDownloadName(job, metaResp(meta))
 	casHintPath := filepath.Join(downloadDir, nameHint+".cas")
 	progress(ProgressInfo{Job: job, Stage: "queued", FileName: nameHint, CASPath: casHintPath, Message: "queued"})
 	if opts.SkipExistingCAS && fileExists(casHintPath) {
@@ -211,6 +216,20 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 
 	tempPath := filepath.Join(opts.CacheDir, urlHash(job.URL)+".part")
 	partialSize := fileSizeIfExists(tempPath)
+	finalPath := filepath.Join(downloadDir, nameHint)
+	casPath := filepath.Join(downloadDir, nameHint+".cas")
+
+	if partialSize > 0 && meta != nil && meta.TotalSize > 0 && partialSize == meta.TotalSize {
+		progress(ProgressInfo{Job: job, Stage: "cache_recovered", FileName: nameHint, DownloadPath: finalPath, DownloadedBytes: partialSize, TotalBytes: meta.TotalSize, Message: "cache recovered"})
+		return finalizeRecoveredPart(tempPath, finalPath, casPath, partialSize, opts, job, progress)
+	}
+	if opts.SkipExistingCAS && fileExists(casPath) {
+		res := &STRMProcessResult{Job: job, DownloadPath: finalPath, CASPath: casPath, Status: "skipped", Message: "cas already exists"}
+		if opts.OnResult != nil {
+			opts.OnResult(*res)
+		}
+		return res, nil
+	}
 
 	req, err := http.NewRequest(http.MethodGet, job.URL, nil)
 	if err != nil {
@@ -228,14 +247,27 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && partialSize > 0 {
+		if meta == nil {
+			meta, _ = probeRemoteMeta(client, job, opts.UserAgent)
+		}
+		name := resolveDownloadName(job, metaResp(meta))
+		finalPath = filepath.Join(downloadDir, name)
+		casPath = filepath.Join(downloadDir, name+".cas")
+		if meta != nil && meta.TotalSize > 0 && partialSize >= meta.TotalSize {
+			progress(ProgressInfo{Job: job, Stage: "cache_recovered", FileName: name, DownloadPath: finalPath, DownloadedBytes: partialSize, TotalBytes: meta.TotalSize, Message: "cache recovered from 416"})
+			return finalizeRecoveredPart(tempPath, finalPath, casPath, partialSize, opts, job, progress)
+		}
+		return nil, fmt.Errorf("range not satisfiable: local part=%d remote=%d", partialSize, metaSize(meta))
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
 	}
-	progress(ProgressInfo{Job: job, Stage: "downloading", FileName: nameHint, DownloadedBytes: partialSize, TotalBytes: resp.ContentLength, Message: "downloading"})
+	progress(ProgressInfo{Job: job, Stage: "downloading", FileName: nameHint, DownloadedBytes: partialSize, TotalBytes: contentTotal(resp.ContentLength, partialSize), Message: "downloading"})
 
 	name := resolveDownloadName(job, resp)
-	finalPath := filepath.Join(downloadDir, name)
-	casPath := filepath.Join(downloadDir, name+".cas")
+	finalPath = filepath.Join(downloadDir, name)
+	casPath = filepath.Join(downloadDir, name+".cas")
 	if opts.SkipExistingCAS && fileExists(casPath) {
 		res := &STRMProcessResult{Job: job, DownloadPath: finalPath, CASPath: casPath, Status: "skipped", Message: "cas already exists"}
 		if opts.OnResult != nil {
@@ -267,19 +299,23 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 	}
 
 	totalSize := partialSize + written
+	progress(ProgressInfo{Job: job, Stage: "downloaded", FileName: name, DownloadPath: finalPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "downloaded"})
+	return finalizeRecoveredPart(tempPath, finalPath, casPath, totalSize, opts, job, progress)
+}
+
+func finalizeRecoveredPart(tempPath, finalPath, casPath string, totalSize int64, opts STRMProcessOptions, job STRMJob, progress func(ProgressInfo)) (*STRMProcessResult, error) {
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
 		return nil, err
 	}
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		return nil, err
 	}
-	progress(ProgressInfo{Job: job, Stage: "downloaded", FileName: name, DownloadPath: finalPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "downloaded"})
-
+	progress(ProgressInfo{Job: job, Stage: "downloaded", FileName: filepath.Base(finalPath), DownloadPath: finalPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "downloaded"})
 	info, err := GenerateFromPath(finalPath, opts.Mode)
 	if err != nil {
 		return nil, err
 	}
-	progress(ProgressInfo{Job: job, Stage: "generating_cas", FileName: name, DownloadPath: finalPath, CASPath: casPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "generating cas"})
+	progress(ProgressInfo{Job: job, Stage: "generating_cas", FileName: filepath.Base(finalPath), DownloadPath: finalPath, CASPath: casPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "generating cas"})
 	if err := WriteCASFile(casPath, info); err != nil {
 		return nil, err
 	}
@@ -288,12 +324,61 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 			return nil, err
 		}
 	}
-	progress(ProgressInfo{Job: job, Stage: "completed", FileName: name, CASPath: casPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "completed"})
+	progress(ProgressInfo{Job: job, Stage: "completed", FileName: filepath.Base(finalPath), CASPath: casPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "completed"})
 	res := &STRMProcessResult{Job: job, DownloadPath: finalPath, CASPath: casPath, Size: totalSize, Status: "done", Message: "ok"}
 	if opts.OnResult != nil {
 		opts.OnResult(*res)
 	}
 	return res, nil
+}
+
+type remoteMeta struct {
+	TotalSize int64
+	Resp      *http.Response
+}
+
+func probeRemoteMeta(client *http.Client, job STRMJob, userAgent string) (*remoteMeta, error) {
+	req, err := http.NewRequest(http.MethodHead, job.URL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("head status: %s", resp.Status)
+	}
+	return &remoteMeta{TotalSize: contentLengthFromHeader(resp.Header.Get("Content-Length")), Resp: resp}, nil
+}
+
+func metaSize(meta *remoteMeta) int64 {
+	if meta == nil {
+		return 0
+	}
+	return meta.TotalSize
+}
+
+func metaResp(meta *remoteMeta) *http.Response {
+	if meta == nil {
+		return nil
+	}
+	return meta.Resp
+}
+
+func contentLengthFromHeader(v string) int64 {
+	if strings.TrimSpace(v) == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func resolveDownloadName(job STRMJob, resp *http.Response) string {
