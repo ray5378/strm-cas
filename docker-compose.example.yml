@@ -13,10 +13,13 @@ services:
       STRM_CAS_STRM_ROOT: /data/strm
       STRM_CAS_CACHE_DIR: /data/cache
       STRM_CAS_DOWNLOAD_DIR: /data/download
+      # 状态数据库：/data/strm-cas.db
       STRM_CAS_DB_PATH: /data/strm-cas.db
+      # 汇总日志：/data/strm-cas-summary.json
       STRM_CAS_LOG_PATH: /data/strm-cas-summary.json
       # STRM_CAS_HTTP_TIMEOUT: 30m
     volumes:
+      # 宿主机 ./data 会包含：strm/ cache/ download/ strm-cas.db / strm-cas-summary.json
       - ./data:/data
 
   # 手动触发一次扫描：
