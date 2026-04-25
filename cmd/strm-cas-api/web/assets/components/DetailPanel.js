@@ -3,8 +3,17 @@ function field(label, value) {
 }
 
 export const DetailPanel = {
-  props: { detail: { type: Object, default: null } },
+  props: {
+    detail: { type: Object, default: null },
+    selectedPaths: { type: Array, default: () => [] },
+    loading: { type: Object, default: () => ({}) },
+  },
+  emits: ['retry', 'toggle-selected', 'copy'],
   computed: {
+    isSelected() {
+      const path = this.detail?.strm_path
+      return !!path && this.selectedPaths.includes(path)
+    },
     basicInfo() {
       if (!this.detail) return []
       return [
@@ -51,6 +60,12 @@ export const DetailPanel = {
       <strong>详情</strong>
       <div v-if="!detail" class="muted section">点击“详情”查看</div>
       <div v-else class="section detail-groups">
+        <div class="toolbar">
+          <button class="secondary" @click="$emit('toggle-selected', detail.strm_path)">{{ isSelected ? '取消选中' : '加入选中' }}</button>
+          <button class="warning" v-if="detail.status === 'failed'" @click="$emit('retry', detail.strm_path)" :disabled="loading.retryOne === detail.strm_path" :class="{ 'is-loading': loading.retryOne === detail.strm_path }">{{ loading.retryOne === detail.strm_path ? '重试中...' : '重试当前项' }}</button>
+          <button @click="$emit('copy', detail.strm_path)">复制 STRM 路径</button>
+          <button v-if="detail.download_path" @click="$emit('copy', detail.download_path)">复制下载路径</button>
+        </div>
         <section class="detail-group">
           <div class="detail-title">基本信息</div>
           <div v-for="item in basicInfo" :key="item.label" class="detail-row"><strong>{{ item.label }}：</strong><span class="mono">{{ item.value }}</span></div>

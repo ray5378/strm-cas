@@ -46,4 +46,8 @@ th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; vert
 .detail-title { font-weight: 700; margin-bottom: 10px; }
 .detail-row { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-bottom: 1px dashed #e5e7eb; }
 .detail-row:last-child { border-bottom: 0; }
+.dialog-mask { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 10000; padding: 16px; }
+.dialog-card { width: min(520px, 100%); }
+.dialog-title { font-size: 18px; font-weight: 700; }
+.dialog-actions { justify-content: flex-end; }
 @media (max-width: 1100px){ .grid, .main-grid { grid-template-columns: 1fr; } }

@@ -1,4 +1,4 @@
-import { computed, onMounted, onBeforeUnmount } from '../vendor/vue.esm-browser.prod.js'
+import { computed, onMounted, onBeforeUnmount, reactive } from '../vendor/vue.esm-browser.prod.js'
 import { useDashboardStore } from '../composables/useDashboardStore.js'
 import { useToast } from '../composables/useToast.js'
 import { StatsCards } from './StatsCards.js'
@@ -10,15 +10,17 @@ import { CompletedPanel } from './CompletedPanel.js'
 import { DetailPanel } from './DetailPanel.js'
 import { ToastStack } from './ToastStack.js'
 import { BatchActionsBar } from './BatchActionsBar.js'
+import { ConfirmDialog } from './ConfirmDialog.js'
 
 export const DashboardApp = {
-  components: { StatsCards, ActionToolbar, CurrentTaskCard, RecordsPanel, DownloadedPanel, CompletedPanel, DetailPanel, ToastStack, BatchActionsBar },
+  components: { StatsCards, ActionToolbar, CurrentTaskCard, RecordsPanel, DownloadedPanel, CompletedPanel, DetailPanel, ToastStack, BatchActionsBar, ConfirmDialog },
   setup() {
     const store = useDashboardStore()
     const toast = useToast()
     const runtime = computed(() => store.state.overview?.runtime || {})
     const stats = computed(() => store.state.overview?.stats || {})
     const autoRefreshLabel = computed(() => runtime.value?.running ? '运行中 3s 自动刷新' : '空闲 15s 自动刷新')
+    const confirmState = reactive({ visible: false, title: '', message: '', confirmText: '确认', action: null })
     let timer = null
 
     const runAction = async (fn, successMessage) => {
@@ -28,6 +30,37 @@ export const DashboardApp = {
         return res
       } catch (e) {
         toast.error(e.message || String(e))
+      }
+    }
+
+    const openConfirm = (title, message, action, confirmText = '确认') => {
+      confirmState.visible = true
+      confirmState.title = title
+      confirmState.message = message
+      confirmState.action = action
+      confirmState.confirmText = confirmText
+    }
+    const closeConfirm = () => {
+      confirmState.visible = false
+      confirmState.title = ''
+      confirmState.message = ''
+      confirmState.action = null
+      confirmState.confirmText = '确认'
+    }
+    const confirmAndRun = async () => {
+      if (!confirmState.action) return
+      const action = confirmState.action
+      closeConfirm()
+      await action()
+    }
+
+    const copyText = async (text) => {
+      if (!text) return
+      try {
+        await navigator.clipboard.writeText(text)
+        toast.success('已复制到剪贴板')
+      } catch {
+        toast.error('复制失败，请手动复制')
       }
     }
 
@@ -52,6 +85,11 @@ export const DashboardApp = {
       scheduleRefresh()
     }
 
+    const confirmBatchStartSelected = () => openConfirm('开始选中项', `即将开始 ${store.state.selectedPaths.length} 个选中任务，是否继续？`, () => runAction(() => store.startSelected(), '选中任务已加入队列'), '开始任务')
+    const confirmBatchRetrySelected = () => openConfirm('重试选中失败项', `即将重试 ${store.state.selectedPaths.length} 个选中项中的失败任务，是否继续？`, () => runAction(() => store.retrySelected(), '选中失败任务已重新加入队列'), '开始重试')
+    const confirmBatchStartFilter = () => openConfirm('按当前筛选开始任务', '将按当前筛选条件批量启动任务，是否继续？', () => runAction(() => store.startCurrentFilter(), '当前筛选任务已加入队列'), '开始任务')
+    const confirmBatchRetryFilter = () => openConfirm('按当前筛选重试失败', '将按当前筛选条件批量重试失败任务，是否继续？', () => runAction(() => store.retryByFilter(), '当前筛选下的失败任务已重新加入队列'), '开始重试')
+
     onMounted(async () => {
       store.state.loading.initial = true
       try {
@@ -66,11 +104,20 @@ export const DashboardApp = {
       if (timer) clearTimeout(timer)
     })
 
-    return { store, runtime, stats, toast, runAction, autoRefreshLabel, toggleAutoRefresh }
+    return { store, runtime, stats, toast, runAction, autoRefreshLabel, toggleAutoRefresh, confirmState, openConfirm, closeConfirm, confirmAndRun, copyText, confirmBatchStartSelected, confirmBatchRetrySelected, confirmBatchStartFilter, confirmBatchRetryFilter }
   },
   template: `
     <div class="layout">
       <ToastStack :items="toast.items" />
+      <ConfirmDialog
+        :visible="confirmState.visible"
+        :title="confirmState.title"
+        :message="confirmState.message"
+        :confirm-text="confirmState.confirmText"
+        :loading="store.state.loading.start || store.state.loading.retryFailed"
+        @confirm="confirmAndRun"
+        @cancel="closeConfirm"
+      />
       <div class="title">strm-cas 控制台</div>
       <div v-if="store.state.error" class="card" style="background:#fee2e2;color:#991b1b">{{ store.state.error }}</div>
       <div v-if="store.state.loading.initial" class="card">页面初始化加载中...</div>
@@ -101,10 +148,10 @@ export const DashboardApp = {
             :filters="store.state.filters"
             :loading="store.state.loading"
             :selected-count="store.state.selectedPaths.length"
-            @start-current-filter="runAction(() => store.startCurrentFilter(), '当前筛选任务已加入队列')"
-            @retry-current-filter="runAction(() => store.retryByFilter(), '当前筛选下的失败任务已重新加入队列')"
-            @start-selected="runAction(() => store.startSelected(), '选中任务已加入队列')"
-            @retry-selected="runAction(() => store.retrySelected(), '选中失败任务已重新加入队列')"
+            @start-current-filter="confirmBatchStartFilter"
+            @retry-current-filter="confirmBatchRetryFilter"
+            @start-selected="confirmBatchStartSelected"
+            @retry-selected="confirmBatchRetrySelected"
             @clear-selected="store.clearSelected()"
           />
           <RecordsPanel
@@ -146,7 +193,14 @@ export const DashboardApp = {
           />
         </div>
         <div>
-          <DetailPanel :detail="store.state.detail" />
+          <DetailPanel
+            :detail="store.state.detail"
+            :selected-paths="store.state.selectedPaths"
+            :loading="store.state.loading"
+            @toggle-selected="store.toggleSelected($event)"
+            @retry="(path) => runAction(() => store.retryOne(path), '任务已重新加入队列')"
+            @copy="copyText"
+          />
         </div>
       </div>
     </div>
