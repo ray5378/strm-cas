@@ -131,7 +131,7 @@ export const DashboardApp = {
       if (timer) clearTimeout(timer)
     })
 
-    return { store, runtime, stats, toast, runAction, autoRefreshLabel, toggleAutoRefresh, confirmState, openConfirm, closeConfirm, confirmAndRun, copyText, updateSettingsField, confirmBatchStartSelected, confirmBatchRetrySelected, confirmBatchStartFilter, confirmBatchRetryFilter, confirmStopTasks }
+    return { store, runtime, stats, toast, runAction, autoRefreshLabel, toggleAutoRefresh, confirmState, openConfirm, closeConfirm, confirmAndRun, copyText, updateSettingsField, confirmBatchStartSelected, confirmBatchRetrySelected, confirmBatchStartFilter, confirmBatchRetryFilter, confirmStopAfterCurrentTasks, confirmStopTasks }
   },
   template: `
     <div class="layout">
@@ -233,6 +233,16 @@ export const DashboardApp = {
             :detail="store.state.detail"
             :selected-paths="store.state.selectedPaths"
             :loading="store.state.loading"
+            @toggle-selected="store.toggleSelected($event)"
+            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
+            @copy="copyText"
+          />
+        </div>
+      </div>
+    </div>
+  `,
+}
+ading"
             @toggle-selected="store.toggleSelected($event)"
             @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
             @copy="copyText"

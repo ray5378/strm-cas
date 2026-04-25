@@ -12,7 +12,7 @@ export const ActionToolbar = {
     autoRefreshLabel: { type: String, default: '空闲 15s / 运行中 3s' },
     settings: { type: Object, default: () => ({ concurrency: 2, total_rate_limit_mb: 0 }) },
   },
-  emits: ['scan', 'reconcile-db', 'start', 'stop', 'retry-failed', 'refresh', 'save-settings', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel', 'toggle-auto-refresh', 'update-settings'],
+  emits: ['scan', 'reconcile-db', 'start', 'stop', 'stop-after-current', 'retry-failed', 'refresh', 'save-settings', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel', 'toggle-auto-refresh', 'update-settings'],
   template: `
     <div class="section card">
       <div class="toolbar">
