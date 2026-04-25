@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  strm-cas:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: strm-cas:latest
+    container_name: strm-cas
+    restart: unless-stopped
+    ports:
+      - "18457:18457"
+    environment:
+      TZ: Asia/Shanghai
+      STRM_CAS_LISTEN: ":18457"
+      STRM_CAS_STRM_ROOT: /strm
+      STRM_CAS_CACHE_DIR: /cache
+      STRM_CAS_DOWNLOAD_DIR: /download
+      STRM_CAS_DB_PATH: /download/strm-cas.db
+      STRM_CAS_LOG_PATH: /download/strm-cas-summary.json
+      # STRM_CAS_HTTP_TIMEOUT: 30m
+    volumes:
+      - ./data/strm:/strm
+      - ./data/cache:/cache
+      - ./data/download:/download
+    command: ["strm-cas-api"]
+
+  # 手动执行一次扫描示例：
+  # docker compose run --rm strm-cas-job strm-cas -scan-strm
+  strm-cas-job:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: strm-cas:latest
+    profiles: ["manual"]
+    environment:
+      TZ: Asia/Shanghai
+      STRM_CAS_STRM_ROOT: /strm
+      STRM_CAS_CACHE_DIR: /cache
+      STRM_CAS_DOWNLOAD_DIR: /download
+      STRM_CAS_DB_PATH: /download/strm-cas.db
+      STRM_CAS_LOG_PATH: /download/strm-cas-summary.json
+    volumes:
+      - ./data/strm:/strm
+      - ./data/cache:/cache
+      - ./data/download:/download
+    entrypoint: ["strm-cas"]
+    command: ["-scan-strm"]

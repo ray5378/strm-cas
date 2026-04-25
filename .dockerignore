@@ -1,0 +1,6 @@
+.git
+strm-cas
+strm-cas-api
+data
+*.db
+*.log
