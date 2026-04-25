@@ -231,15 +231,23 @@ func (a *app) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("method not allowed"), 405)
 		return
 	}
-	jobs, err := a.currentJobs(true)
+	jobs, err := a.currentJobs(false)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
 	}
-	filtered := make([]cas.STRMJob, 0)
+	stored, err := cas.ListStoredRecordsAll(a.db, cas.QueryOptions{Status: "failed"})
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	byPath := make(map[string]cas.STRMJob, len(jobs))
 	for _, job := range jobs {
-		rec, _ := cas.GetRecord(a.db, job.STRMPath)
-		if rec != nil && rec.Status == "failed" {
+		byPath[job.STRMPath] = job
+	}
+	filtered := make([]cas.STRMJob, 0)
+	for _, rec := range stored {
+		if job, ok := byPath[rec.STRMPath]; ok {
 			filtered = append(filtered, job)
 		}
 	}

@@ -11,6 +11,10 @@ export function createStore() {
     downloadedPage: 1,
     completedPage: 1,
     completedStatus: '',
+    recordsJump: '',
+    downloadedJump: '',
+    completedJump: '',
+    startMode: 'pending',
     error: '',
     async refreshOverview() { this.overview = await api.overview() },
     async refreshRecords() { this.records = await api.records(this.filters) },
@@ -18,7 +22,7 @@ export function createStore() {
     async refreshCompleted() { this.completed = await api.runtimeCompleted({ page: this.completedPage, page_size: 10, status: this.completedStatus }) },
     async loadDetail(path) { this.detail = await api.recordDetail(path) },
     async refreshScan() { return await api.refreshScan() },
-    async startTasks() { return await api.startTasks() },
+    async startTasks() { return await api.startTasks({ mode: this.startMode, status: this.filters.status, search: this.filters.search }) },
     async retryFailedTasks() { return await api.retryFailedTasks() },
     async refreshAll() {
       try {
