@@ -20,23 +20,61 @@
 - 构建阶段：`golang:1.25-alpine`
 - 运行阶段：`alpine:3.22`
 
-### 构建镜像
+### 构建本地镜像
 
 ```bash
 cd /root/.openclaw/workspace/strm-cas
-docker build -t strm-cas:latest .
+docker build -t ray5378/strm-cas:latest .
+```
+
+### 直接使用已发布 latest 镜像
+
+```bash
+docker pull ray5378/strm-cas:latest
+```
+
+### docker-compose 示例
+
+```yaml
+version: "3.9"
+
+services:
+  strm-cas:
+    image: ray5378/strm-cas:latest
+    container_name: strm-cas
+    restart: unless-stopped
+    ports:
+      - "18457:18457"
+    environment:
+      TZ: Asia/Shanghai
+      STRM_CAS_LISTEN: ":18457"
+      STRM_CAS_STRM_ROOT: /data/strm
+      STRM_CAS_CACHE_DIR: /data/cache
+      STRM_CAS_DOWNLOAD_DIR: /data/download
+      STRM_CAS_DB_PATH: /data/strm-cas.db
+      STRM_CAS_LOG_PATH: /data/strm-cas-summary.json
+    volumes:
+      - ./data:/data
 ```
 
 ### 启动 Web 控制台
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 默认访问：
 
 ```text
 http://127.0.0.1:18457/web/
+```
+
+### 更新到最新镜像
+
+```bash
+docker pull ray5378/strm-cas:latest
+docker compose down
+docker compose up -d
 ```
 
 ### 手动执行一次扫描
