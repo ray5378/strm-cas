@@ -6,11 +6,12 @@ export const DownloadedPanel = {
   props: {
     downloaded: { type: Object, default: () => ({ total: 0, items: [] }) },
     page: { type: Number, default: 1 },
+    loading: { type: Boolean, default: false },
   },
   emits: ['page-prev', 'page-next', 'page-jump'],
   methods: { stageText },
   template: `
-    <div class="card section">
+    <div class="card section" :class="{ 'panel-loading': loading }">
       <strong>已下载任务</strong>
       <table>
         <thead><tr><th>阶段</th><th>文件</th><th>下载路径</th><th>更新时间</th></tr></thead>

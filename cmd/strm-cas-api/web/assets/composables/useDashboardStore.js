@@ -15,29 +15,58 @@ export function useDashboardStore() {
     startMode: 'pending',
     error: '',
     confirmClear: false,
+    loading: {
+      initial: false,
+      refreshAll: false,
+      scan: false,
+      start: false,
+      retryFailed: false,
+      clearDB: false,
+      records: false,
+      downloaded: false,
+      completed: false,
+      detail: false,
+      retryOne: '',
+    },
   })
 
-  async function wrap(action) {
+  async function wrap(action, loadingKey) {
     try {
       state.error = ''
+      if (loadingKey) state.loading[loadingKey] = true
       return await action()
     } catch (e) {
       state.error = e.message || String(e)
       throw e
+    } finally {
+      if (loadingKey) state.loading[loadingKey] = false
     }
   }
 
   async function refreshOverview() { state.overview = await dashboardService.overview() }
-  async function refreshRecords() { state.records = await dashboardService.records(state.filters) }
-  async function refreshDownloaded() { state.downloaded = await dashboardService.runtimeDownloaded({ page: state.downloadedPage, page_size: 10 }) }
-  async function refreshCompleted() { state.completed = await dashboardService.runtimeCompleted({ page: state.completedPage, page_size: 10, status: state.completedStatus }) }
-  async function refreshAll() { return wrap(async () => { await Promise.all([refreshOverview(), refreshRecords(), refreshDownloaded(), refreshCompleted()]) }) }
-  async function loadDetail(path) { return wrap(async () => { state.detail = await dashboardService.recordDetail(path) }) }
-  async function scan() { return wrap(async () => { const res = await dashboardService.refreshScan(); await refreshAll(); return res }) }
-  async function start() { return wrap(async () => { const res = await dashboardService.startTasks({ mode: state.startMode, status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }) }
-  async function retryFailed() { return wrap(async () => { const res = await dashboardService.retryFailedTasks(); await refreshAll(); return res }) }
-  async function retryOne(path) { return wrap(async () => { const res = await dashboardService.retryTask(path); await refreshAll(); return res }) }
-  async function clearDB() { return wrap(async () => { const res = await dashboardService.clearDB(); state.detail = null; state.confirmClear = false; await refreshAll(); return res }) }
+  async function refreshRecords() { return wrap(async () => { state.records = await dashboardService.records(state.filters) }, 'records') }
+  async function refreshDownloaded() { return wrap(async () => { state.downloaded = await dashboardService.runtimeDownloaded({ page: state.downloadedPage, page_size: 10 }) }, 'downloaded') }
+  async function refreshCompleted() { return wrap(async () => { state.completed = await dashboardService.runtimeCompleted({ page: state.completedPage, page_size: 10, status: state.completedStatus }) }, 'completed') }
+  async function refreshAll() { return wrap(async () => { await Promise.all([refreshOverview(), refreshRecords(), refreshDownloaded(), refreshCompleted()]) }, 'refreshAll') }
+  async function loadDetail(path) { return wrap(async () => { state.detail = await dashboardService.recordDetail(path) }, 'detail') }
+  async function scan() { return wrap(async () => { const res = await dashboardService.refreshScan(); await refreshAll(); return res }, 'scan') }
+  async function start() { return wrap(async () => { const res = await dashboardService.startTasks({ mode: state.startMode, status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'start') }
+  async function retryFailed() { return wrap(async () => { const res = await dashboardService.retryFailedTasks(); await refreshAll(); return res }, 'retryFailed') }
+  async function retryOne(path) {
+    state.loading.retryOne = path
+    try {
+      state.error = ''
+      const res = await dashboardService.retryTask(path)
+      await refreshAll()
+      return res
+    } catch (e) {
+      state.error = e.message || String(e)
+      throw e
+    } finally {
+      state.loading.retryOne = ''
+    }
+  }
+  async function clearDB() { return wrap(async () => { const res = await dashboardService.clearDB(); state.detail = null; state.confirmClear = false; await refreshAll(); return res }, 'clearDB') }
 
   return { state, refreshOverview, refreshRecords, refreshDownloaded, refreshCompleted, refreshAll, loadDetail, scan, start, retryFailed, retryOne, clearDB }
 }

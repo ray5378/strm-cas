@@ -7,6 +7,7 @@ export const RecordsPanel = {
   props: {
     records: { type: Object, default: () => ({ total: 0, items: [] }) },
     filters: { type: Object, required: true },
+    loading: { type: Object, default: () => ({}) },
   },
   emits: ['set-status', 'apply-search', 'detail', 'retry', 'page-prev', 'page-next', 'page-jump'],
   data() {
@@ -17,13 +18,13 @@ export const RecordsPanel = {
   },
   methods: { statusText },
   template: `
-    <div class="card">
+    <div class="card" :class="{ 'panel-loading': loading.records }">
       <div class="toolbar records-toolbar">
         <strong>数据库记录</strong>
         <FilterTabs :model-value="filters.status" @update:modelValue="$emit('set-status', $event)" />
         <div class="row grow">
           <input v-model="searchValue" placeholder="搜索路径 / URL / 错误" class="grow-input" />
-          <button @click="$emit('apply-search', searchValue)">筛选</button>
+          <button @click="$emit('apply-search', searchValue)" :disabled="loading.records">筛选</button>
         </div>
       </div>
       <table>
@@ -36,8 +37,8 @@ export const RecordsPanel = {
             <td class="mono">{{ item.cas_path || '' }}</td>
             <td>{{ item.last_message || '' }}</td>
             <td>
-              <button @click="$emit('detail', item.strm_path)">详情</button>
-              <button v-if="item.status === 'failed'" @click="$emit('retry', item.strm_path)" class="warning">重试</button>
+              <button @click="$emit('detail', item.strm_path)" :disabled="loading.detail">详情</button>
+              <button v-if="item.status === 'failed'" @click="$emit('retry', item.strm_path)" class="warning" :disabled="loading.retryOne === item.strm_path" :class="{ 'is-loading': loading.retryOne === item.strm_path }">{{ loading.retryOne === item.strm_path ? '重试中...' : '重试' }}</button>
             </td>
           </tr>
         </tbody>

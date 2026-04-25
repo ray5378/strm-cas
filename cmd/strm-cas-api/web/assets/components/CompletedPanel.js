@@ -8,11 +8,12 @@ export const CompletedPanel = {
     completed: { type: Object, default: () => ({ total: 0, items: [] }) },
     status: { type: String, default: '' },
     page: { type: Number, default: 1 },
+    loading: { type: Object, default: () => ({}) },
   },
   emits: ['set-status', 'retry', 'page-prev', 'page-next', 'page-jump'],
   methods: { statusText },
   template: `
-    <div class="card section">
+    <div class="card section" :class="{ 'panel-loading': loading.completed }">
       <div class="toolbar records-toolbar">
         <strong>已完成任务</strong>
         <FilterTabs :model-value="status" @update:modelValue="$emit('set-status', $event)" />
@@ -25,7 +26,7 @@ export const CompletedPanel = {
             <td><span class="badge" :class="item.status || 'pending'">{{ statusText(item.status) }}</span></td>
             <td class="mono">{{ item.job?.strm_path || '' }}</td>
             <td class="mono">{{ item.cas_path || '' }}</td>
-            <td>{{ item.message || '' }} <button v-if="item.status === 'failed'" @click="$emit('retry', item.job?.strm_path || '')" class="warning">重试</button></td>
+            <td>{{ item.message || '' }} <button v-if="item.status === 'failed'" @click="$emit('retry', item.job?.strm_path || '')" class="warning" :disabled="loading.retryOne === (item.job?.strm_path || '')" :class="{ 'is-loading': loading.retryOne === (item.job?.strm_path || '') }">{{ loading.retryOne === (item.job?.strm_path || '') ? '重试中...' : '重试' }}</button></td>
           </tr>
         </tbody>
       </table>
