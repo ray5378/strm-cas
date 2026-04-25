@@ -174,7 +174,7 @@ export const DashboardApp = {
         @clear-step2="runAction(() => store.clearDB(), '数据库已清理')"
         @clear-cancel="store.state.confirmClear = false"
       />
-      <CurrentTaskCard class="section" :current="runtime.current || null" />
+      <CurrentTaskCard class="section" :current="runtime.current || null" :active-count="runtime.active_count || 0" :active-items="runtime.active_items || []" />
       <div class="main-grid section">
         <div>
           <BatchActionsBar

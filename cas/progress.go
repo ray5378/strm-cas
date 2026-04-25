@@ -24,6 +24,26 @@ func NewSharedRateLimiter(bytesPerSec int64) *rateLimiter {
 	return newRateLimiter(bytesPerSec)
 }
 
+func (r *rateLimiter) chunkSize(max int) int {
+	if r == nil || r.bytesPer <= 0 {
+		return max
+	}
+	chunk := int(r.bytesPer / 8)
+	if chunk < 1024 {
+		chunk = 1024
+	}
+	if chunk > 64*1024 {
+		chunk = 64 * 1024
+	}
+	if chunk > max {
+		chunk = max
+	}
+	if chunk <= 0 {
+		chunk = max
+	}
+	return chunk
+}
+
 func (r *rateLimiter) wait(ctx context.Context, n int) error {
 	if r == nil || r.bytesPer <= 0 || n <= 0 {
 		return nil
@@ -70,13 +90,16 @@ func (c *countingReader) Read(p []byte) (int, error) {
 		default:
 		}
 	}
-	n, err := c.reader.Read(p)
-	if n > 0 {
-		if c.limiter != nil {
-			if waitErr := c.limiter.wait(c.ctx, n); waitErr != nil {
-				return 0, waitErr
-			}
+	readBuf := p
+	if c.limiter != nil {
+		chunk := c.limiter.chunkSize(len(p))
+		if err := c.limiter.wait(c.ctx, chunk); err != nil {
+			return 0, err
 		}
+		readBuf = p[:chunk]
+	}
+	n, err := c.reader.Read(readBuf)
+	if n > 0 {
 		c.total += int64(n)
 		if c.onRead != nil {
 			c.onRead(c.total)

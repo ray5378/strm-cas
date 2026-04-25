@@ -559,6 +559,7 @@ func (a *app) startJobs(jobs []cas.STRMJob) error {
 				for job := range jobCh {
 					res, err := cas.ProcessSingleSTRMWithContext(ctx, client, limiter, cfg, job)
 					if err != nil {
+						a.runtime.RemoveActive(job.STRMPath)
 						status := "failed"
 						if ctx.Err() != nil {
 							status = "skipped"

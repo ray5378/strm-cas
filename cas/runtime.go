@@ -24,6 +24,7 @@ type RuntimeStore struct {
 	startedAt  string
 	endedAt    string
 	current    *ProgressInfo
+	active     map[string]ProgressInfo
 	downloaded []ProgressInfo
 	completed  []STRMProcessResult
 	maxHistory int
@@ -33,7 +34,7 @@ func NewRuntimeStore(maxHistory int) *RuntimeStore {
 	if maxHistory <= 0 {
 		maxHistory = 500
 	}
-	return &RuntimeStore{maxHistory: maxHistory}
+	return &RuntimeStore{maxHistory: maxHistory, active: make(map[string]ProgressInfo)}
 }
 
 func (r *RuntimeStore) Reset() {
@@ -43,6 +44,7 @@ func (r *RuntimeStore) Reset() {
 	r.startedAt = ""
 	r.endedAt = ""
 	r.current = nil
+	r.active = make(map[string]ProgressInfo)
 	r.downloaded = nil
 	r.completed = nil
 }
@@ -54,6 +56,7 @@ func (r *RuntimeStore) MarkStarted() {
 	r.startedAt = time.Now().Format(time.RFC3339)
 	r.endedAt = ""
 	r.current = nil
+	r.active = make(map[string]ProgressInfo)
 	r.downloaded = nil
 	r.completed = nil
 }
@@ -64,6 +67,7 @@ func (r *RuntimeStore) MarkFinished() {
 	r.running = false
 	r.endedAt = time.Now().Format(time.RFC3339)
 	r.current = nil
+	r.active = make(map[string]ProgressInfo)
 }
 
 func (r *RuntimeStore) SetCurrent(p ProgressInfo) {
@@ -72,6 +76,18 @@ func (r *RuntimeStore) SetCurrent(p ProgressInfo) {
 	p.UpdatedAt = time.Now().Format(time.RFC3339)
 	cp := p
 	r.current = &cp
+	if p.Job.STRMPath != "" {
+		r.active[p.Job.STRMPath] = cp
+	}
+}
+
+func (r *RuntimeStore) RemoveActive(strmPath string) {
+	if strmPath == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.active, strmPath)
 }
 
 func (r *RuntimeStore) AddDownloaded(p ProgressInfo) {
@@ -87,6 +103,7 @@ func (r *RuntimeStore) AddDownloaded(p ProgressInfo) {
 func (r *RuntimeStore) AddCompleted(res STRMProcessResult) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	delete(r.active, res.Job.STRMPath)
 	r.completed = append([]STRMProcessResult{res}, r.completed...)
 	if len(r.completed) > r.maxHistory {
 		r.completed = r.completed[:r.maxHistory]
@@ -94,12 +111,14 @@ func (r *RuntimeStore) AddCompleted(res STRMProcessResult) {
 }
 
 type RuntimeSnapshot struct {
-	Running         bool          `json:"running"`
-	StartedAt       string        `json:"started_at,omitempty"`
-	EndedAt         string        `json:"ended_at,omitempty"`
-	Current         *ProgressInfo `json:"current,omitempty"`
-	DownloadedCount int           `json:"downloaded_count"`
-	CompletedCount  int           `json:"completed_count"`
+	Running         bool           `json:"running"`
+	StartedAt       string         `json:"started_at,omitempty"`
+	EndedAt         string         `json:"ended_at,omitempty"`
+	Current         *ProgressInfo  `json:"current,omitempty"`
+	ActiveCount     int            `json:"active_count"`
+	ActiveItems     []ProgressInfo `json:"active_items,omitempty"`
+	DownloadedCount int            `json:"downloaded_count"`
+	CompletedCount  int            `json:"completed_count"`
 }
 
 func (r *RuntimeStore) Snapshot() RuntimeSnapshot {
@@ -110,11 +129,23 @@ func (r *RuntimeStore) Snapshot() RuntimeSnapshot {
 		c := *r.current
 		cur = &c
 	}
+	activeItems := make([]ProgressInfo, 0, len(r.active))
+	for _, item := range r.active {
+		activeItems = append(activeItems, item)
+	}
+	sort.Slice(activeItems, func(i, j int) bool {
+		return activeItems[i].UpdatedAt > activeItems[j].UpdatedAt
+	})
+	if len(activeItems) > 8 {
+		activeItems = activeItems[:8]
+	}
 	return RuntimeSnapshot{
 		Running:         r.running,
 		StartedAt:       r.startedAt,
 		EndedAt:         r.endedAt,
 		Current:         cur,
+		ActiveCount:     len(r.active),
+		ActiveItems:     append([]ProgressInfo(nil), activeItems...),
 		DownloadedCount: len(r.downloaded),
 		CompletedCount:  len(r.completed),
 	}
