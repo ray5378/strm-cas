@@ -8,12 +8,13 @@ import { RecordsPanel } from './RecordsPanel.js'
 import { DownloadedPanel } from './DownloadedPanel.js'
 import { CompletedPanel } from './CompletedPanel.js'
 import { DetailPanel } from './DetailPanel.js'
+import { ReconcileSummaryCard } from './ReconcileSummaryCard.js'
 import { ToastStack } from './ToastStack.js'
 import { BatchActionsBar } from './BatchActionsBar.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 
 export const DashboardApp = {
-  components: { StatsCards, ActionToolbar, CurrentTaskCard, RecordsPanel, DownloadedPanel, CompletedPanel, DetailPanel, ToastStack, BatchActionsBar, ConfirmDialog },
+  components: { StatsCards, ActionToolbar, CurrentTaskCard, RecordsPanel, DownloadedPanel, CompletedPanel, DetailPanel, ReconcileSummaryCard, ToastStack, BatchActionsBar, ConfirmDialog },
   setup() {
     const store = useDashboardStore()
     const toast = useToast()
@@ -35,8 +36,9 @@ export const DashboardApp = {
         toast.success(res.stopped ? '当前任务已发出停止请求' : '当前没有运行中的任务')
         return
       }
-      if (res && typeof res.total_strm === 'number') {
-        toast.success(`数据库纠正完成：STRM ${res.total_strm}，发现 CAS ${res.cas_found}，标记完成 ${res.marked_done}，改回待处理 ${res.marked_pending}，异常 ${res.marked_exception}，删除过期记录 ${res.removed_stale}`)
+      if (res && res.summary && typeof res.summary.total_strm === 'number') {
+        const s = res.summary
+        toast.success(`数据库已纠正：STRM ${s.total_strm}，CAS ${s.total_cas}，done ${s.done}，pending ${s.pending}，exception ${s.exception}，更新 ${s.updated}，删除陈旧 ${s.deleted_stale}`)
         return
       }
       toast.success(fallback)
@@ -139,7 +141,7 @@ export const DashboardApp = {
         :title="confirmState.title"
         :message="confirmState.message"
         :confirm-text="confirmState.confirmText"
-        :loading="store.state.loading.start || store.state.loading.retryFailed || store.state.loading.stop"
+        :loading="store.state.loading.start || store.state.loading.retryFailed || store.state.loading.stop || store.state.loading.reconcileDB"
         @confirm="confirmAndRun"
         @cancel="closeConfirm"
       />
@@ -148,6 +150,7 @@ export const DashboardApp = {
       <div v-if="store.state.loading.initial" class="card">页面初始化加载中...</div>
       <div v-if="store.state.errors.overview" class="card" style="background:#fff7ed;color:#9a3412">概览刷新失败：{{ store.state.errors.overview }}</div>
       <StatsCards :stats="stats" />
+      <ReconcileSummaryCard :summary="store.state.reconcileSummary" />
       <ActionToolbar
         :running="!!runtime.running"
         :runtime="runtime"
@@ -230,15 +233,6 @@ export const DashboardApp = {
             :selected-paths="store.state.selectedPaths"
             :loading="store.state.loading"
             @toggle-selected="store.toggleSelected($event)"
-            @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
-            @copy="copyText"
-          />
-        </div>
-      </div>
-    </div>
-  `,
-}
-gleSelected($event)"
             @retry="(path) => runAction(() => store.retryOne(path), res => toastResult(res, '任务已重新加入队列'))"
             @copy="copyText"
           />

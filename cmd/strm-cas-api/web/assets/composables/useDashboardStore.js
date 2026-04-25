@@ -9,6 +9,7 @@ export function useDashboardStore() {
     downloaded: { total: 0, items: [] },
     completed: { total: 0, items: [] },
     detail: null,
+    reconcileSummary: null,
     selectedPaths: [],
     filters: { status: '', search: '', page: 1, page_size: 10 },
     downloadedPage: 1,

@@ -11,7 +11,6 @@ export const dashboardService = {
   runtimeCompleted: (params) => getJSON('/api/runtime/completed?' + new URLSearchParams(params)),
   refreshScan: () => postJSON('/api/scan/refresh'),
   reconcileDB: () => postJSON('/api/db/reconcile'),
-  reconcileDB: () => postJSON('/api/db/reconcile'),
   startTasks: (payload) => postJSON('/api/tasks/start', payload || {}),
   startSelectedTasks: (paths) => postJSON('/api/tasks/start-selected', { paths }),
   stopTasks: () => postJSON('/api/tasks/stop'),
