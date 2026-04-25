@@ -10,8 +10,9 @@ export const RecordsPanel = {
     filters: { type: Object, required: true },
     loading: { type: Object, default: () => ({}) },
     errorMessage: { type: String, default: '' },
+    selectedPaths: { type: Array, default: () => [] },
   },
-  emits: ['set-status', 'apply-search', 'detail', 'retry', 'page-prev', 'page-next', 'page-jump'],
+  emits: ['set-status', 'apply-search', 'detail', 'retry', 'page-prev', 'page-next', 'page-jump', 'toggle-selected', 'toggle-select-all'],
   data() {
     return { searchValue: this.filters.search || '' }
   },
@@ -22,6 +23,12 @@ export const RecordsPanel = {
     emptyMessage() {
       if (this.filters.search || this.filters.status) return '试试调整筛选条件或先执行扫描。'
       return '先点击“扫描 /strm”，把当前任务同步进数据库。'
+    },
+    currentPagePaths() {
+      return (this.records.items || []).map(item => item.strm_path)
+    },
+    allCurrentSelected() {
+      return this.currentPagePaths.length > 0 && this.currentPagePaths.every(path => this.selectedPaths.includes(path))
     },
   },
   watch: {
@@ -34,7 +41,7 @@ export const RecordsPanel = {
       :page="filters.page || 1"
       :page-size="filters.page_size || 10"
       :loading="loading.records"
-      :empty-colspan="5"
+      :empty-colspan="6"
       :empty-title="emptyTitle"
       :empty-message="emptyMessage"
       :error-message="errorMessage"
@@ -54,11 +61,12 @@ export const RecordsPanel = {
         </div>
       </template>
       <template #thead>
-        <tr><th>状态</th><th>strm</th><th>cas</th><th>最后结果</th><th></th></tr>
+        <tr><th><input type="checkbox" :checked="allCurrentSelected" @change="$emit('toggle-select-all', currentPagePaths)" /></th><th>状态</th><th>strm</th><th>cas</th><th>最后结果</th><th></th></tr>
       </template>
       <template #rows>
-        <EmptyState v-if="!(records.items || []).length" :colspan="5" :title="emptyTitle" :message="emptyMessage" />
+        <EmptyState v-if="!(records.items || []).length" :colspan="6" :title="emptyTitle" :message="emptyMessage" />
         <tr v-for="item in (records.items || [])" :key="item.strm_path">
+          <td><input type="checkbox" :checked="selectedPaths.includes(item.strm_path)" @change="$emit('toggle-selected', item.strm_path)" /></td>
           <td><span class="badge" :class="item.status || 'pending'">{{ statusText(item.status) }}</span></td>
           <td class="mono">{{ item.strm_path }}</td>
           <td class="mono">{{ item.cas_path || '' }}</td>

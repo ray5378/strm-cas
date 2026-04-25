@@ -337,6 +337,27 @@ func (a *app) handleDBClear(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
+func (a *app) matchJobsByPaths(jobs []cas.STRMJob, paths []string, onlyFailed bool) []cas.STRMJob {
+	set := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		set[path] = struct{}{}
+	}
+	filtered := make([]cas.STRMJob, 0, len(paths))
+	for _, job := range jobs {
+		if _, ok := set[job.STRMPath]; !ok {
+			continue
+		}
+		if onlyFailed {
+			rec, _ := cas.GetRecord(a.db, job.STRMPath)
+			if rec == nil || rec.Status != "failed" {
+				continue
+			}
+		}
+		filtered = append(filtered, job)
+	}
+	return filtered
+}
+
 func (a *app) currentJobs(sync bool) ([]cas.STRMJob, error) {
 	jobs, err := cas.DiscoverSTRMJobs(a.cfg.STRMRoot)
 	if err != nil {

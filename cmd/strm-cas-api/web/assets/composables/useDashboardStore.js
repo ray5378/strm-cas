@@ -8,6 +8,7 @@ export function useDashboardStore() {
     downloaded: { total: 0, items: [] },
     completed: { total: 0, items: [] },
     detail: null,
+    selectedPaths: [],
     filters: { status: '', search: '', page: 1, page_size: 10 },
     downloadedPage: 1,
     completedPage: 1,
@@ -42,6 +43,27 @@ export function useDashboardStore() {
       throw e
     } finally {
       if (loadingKey) state.loading[loadingKey] = false
+    }
+  }
+
+  function toggleSelected(path) {
+    const idx = state.selectedPaths.indexOf(path)
+    if (idx >= 0) state.selectedPaths.splice(idx, 1)
+    else state.selectedPaths.push(path)
+  }
+  function clearSelected() { state.selectedPaths.splice(0, state.selectedPaths.length) }
+  function toggleSelectAllCurrentPage(paths) {
+    const valid = paths.filter(Boolean)
+    const allSelected = valid.length > 0 && valid.every(path => state.selectedPaths.includes(path))
+    if (allSelected) {
+      for (const path of valid) {
+        const idx = state.selectedPaths.indexOf(path)
+        if (idx >= 0) state.selectedPaths.splice(idx, 1)
+      }
+      return
+    }
+    for (const path of valid) {
+      if (!state.selectedPaths.includes(path)) state.selectedPaths.push(path)
     }
   }
 
@@ -86,8 +108,24 @@ export function useDashboardStore() {
   async function scan() { return wrap(async () => { const res = await dashboardService.refreshScan(); await refreshAll(); return res }, 'scan') }
   async function start() { return wrap(async () => { const res = await dashboardService.startTasks({ mode: state.startMode, status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'start') }
   async function startCurrentFilter() { return wrap(async () => { const res = await dashboardService.startTasks({ mode: 'current_filter', status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'start') }
+  async function startSelected() {
+    return wrap(async () => {
+      const res = await dashboardService.startSelectedTasks(state.selectedPaths)
+      clearSelected()
+      await refreshAll()
+      return res
+    }, 'start')
+  }
   async function retryFailed() { return wrap(async () => { const res = await dashboardService.retryFailedTasks(); await refreshAll(); return res }, 'retryFailed') }
-  async function retrySelected() { return wrap(async () => { const res = await dashboardService.retrySelectedTasks({ status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'retryFailed') }
+  async function retrySelected() {
+    return wrap(async () => {
+      const res = await dashboardService.retrySelectedTasks({ paths: state.selectedPaths })
+      clearSelected()
+      await refreshAll()
+      return res
+    }, 'retryFailed')
+  }
+  async function retryByFilter() { return wrap(async () => { const res = await dashboardService.retrySelectedTasks({ status: state.filters.status, search: state.filters.search }); await refreshAll(); return res }, 'retryFailed') }
   async function retryOne(path) {
     state.loading.retryOne = path
     try {
@@ -102,7 +140,7 @@ export function useDashboardStore() {
       state.loading.retryOne = ''
     }
   }
-  async function clearDB() { return wrap(async () => { const res = await dashboardService.clearDB(); state.detail = null; state.confirmClear = false; await refreshAll(); return res }, 'clearDB') }
+  async function clearDB() { return wrap(async () => { const res = await dashboardService.clearDB(); state.detail = null; state.confirmClear = false; clearSelected(); await refreshAll(); return res }, 'clearDB') }
 
-  return { state, refreshOverview, refreshRecords, refreshDownloaded, refreshCompleted, refreshAll, loadDetail, scan, start, startCurrentFilter, retryFailed, retrySelected, retryOne, clearDB }
+  return { state, toggleSelected, clearSelected, toggleSelectAllCurrentPage, refreshOverview, refreshRecords, refreshDownloaded, refreshCompleted, refreshAll, loadDetail, scan, start, startCurrentFilter, startSelected, retryFailed, retrySelected, retryByFilter, retryOne, clearDB }
 }

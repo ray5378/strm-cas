@@ -9,6 +9,7 @@ export const dashboardService = {
   runtimeCompleted: (params) => getJSON('/api/runtime/completed?' + new URLSearchParams(params)),
   refreshScan: () => postJSON('/api/scan/refresh'),
   startTasks: (payload) => postJSON('/api/tasks/start', payload || {}),
+  startSelectedTasks: (paths) => postJSON('/api/tasks/start-selected', { paths }),
   retryTask: (path) => postJSON('/api/tasks/retry', { path }),
   retryFailedTasks: () => postJSON('/api/tasks/retry-failed'),
   retrySelectedTasks: (payload) => postJSON('/api/tasks/retry-selected', payload || {}),

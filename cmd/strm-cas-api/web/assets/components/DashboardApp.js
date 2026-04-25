@@ -100,14 +100,21 @@ export const DashboardApp = {
           <BatchActionsBar
             :filters="store.state.filters"
             :loading="store.state.loading"
+            :selected-count="store.state.selectedPaths.length"
             @start-current-filter="runAction(() => store.startCurrentFilter(), '当前筛选任务已加入队列')"
-            @retry-current-filter="runAction(() => store.retrySelected(), '当前筛选下的失败任务已重新加入队列')"
+            @retry-current-filter="runAction(() => store.retryByFilter(), '当前筛选下的失败任务已重新加入队列')"
+            @start-selected="runAction(() => store.startSelected(), '选中任务已加入队列')"
+            @retry-selected="runAction(() => store.retrySelected(), '选中失败任务已重新加入队列')"
+            @clear-selected="store.clearSelected()"
           />
           <RecordsPanel
             :records="store.state.records"
             :filters="store.state.filters"
             :loading="store.state.loading"
             :error-message="store.state.errors.records"
+            :selected-paths="store.state.selectedPaths"
+            @toggle-selected="store.toggleSelected($event)"
+            @toggle-select-all="store.toggleSelectAllCurrentPage($event)"
             @set-status="(v) => { store.state.filters.status = v; store.state.filters.page = 1; runAction(() => store.refreshRecords()) }"
             @apply-search="(v) => { store.state.filters.search = v; store.state.filters.page = 1; runAction(() => store.refreshRecords(), '筛选已更新') }"
             @detail="(path) => runAction(() => store.loadDetail(path))"
