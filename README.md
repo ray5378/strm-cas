@@ -247,18 +247,6 @@ GET /api/records/detail?path=/strm/a/b/test.strm
 GET /api/runtime
 ```
 
-### 已下载任务分页
-
-```http
-GET /api/runtime/downloaded?page=1&page_size=10
-```
-
-### 已完成任务分页
-
-```http
-GET /api/runtime/completed?page=1&page_size=10&status=done
-```
-
 ### 扫描 /data/strm
 
 ```http

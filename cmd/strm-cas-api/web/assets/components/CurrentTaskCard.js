@@ -46,7 +46,7 @@ export const CurrentTaskCard = {
       </div>
       <div v-if="activeItems.length" class="section">
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
-          <div v-for="(item, idx) in activeItems" :key="idx" class="card">
+          <div v-for="(item, idx) in activeItems" :key="item.job?.strm_path || idx" class="card">
             <div class="mono">{{ item.job?.strm_path || '-' }}</div>
             <div class="row"><span>{{ stageText(item.stage) }}</span><span>{{ item.file_name || '' }}</span><span>{{ formatBytes(item.downloaded_bytes || 0) }}<template v-if="item.total_bytes"> / {{ formatBytes(item.total_bytes) }}</template></span></div>
             <div class="row"><span class="muted">速度：{{ formatSpeed(item.speed_bytes_per_sec) }}</span><span class="muted">ETA：{{ formatETA(item.eta_seconds) }}</span></div>

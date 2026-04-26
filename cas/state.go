@@ -13,22 +13,25 @@ import (
 const stateBucket = "strm_jobs"
 
 type StateRecord struct {
-	STRMPath        string `json:"strm_path"`
-	URL             string `json:"url"`
-	RelativeDir     string `json:"relative_dir"`
-	Status          string `json:"status"`
-	LastMessage     string `json:"last_message,omitempty"`
-	CASPath         string `json:"cas_path,omitempty"`
-	DownloadPath    string `json:"download_path,omitempty"`
-	Size            int64  `json:"size,omitempty"`
-	LastSeenAt      string `json:"last_seen_at,omitempty"`
-	LastProcessedAt string `json:"last_processed_at,omitempty"`
+	STRMPath          string `json:"strm_path"`
+	URL               string `json:"url"`
+	RelativeDir       string `json:"relative_dir"`
+	Status            string `json:"status"`
+	LastMessage       string `json:"last_message,omitempty"`
+	CASPath           string `json:"cas_path,omitempty"`
+	DownloadPath      string `json:"download_path,omitempty"`
+	Size              int64  `json:"size,omitempty"`
+	FilteredMaxGB     int    `json:"filtered_max_gb,omitempty"`
+	FilteredRemoteGB  int64  `json:"filtered_remote_gb,omitempty"`
+	LastSeenAt        string `json:"last_seen_at,omitempty"`
+	LastProcessedAt   string `json:"last_processed_at,omitempty"`
 }
 
 type Stats struct {
 	Total       int `json:"total"`
 	Done        int `json:"done"`
 	Skipped     int `json:"skipped"`
+	Filtered    int `json:"filtered"`
 	Failed      int `json:"failed"`
 	Exception   int `json:"exception"`
 	Pending     int `json:"pending"`
@@ -132,6 +135,8 @@ func UpdateResult(db *bolt.DB, res STRMProcessResult) error {
 		rec.CASPath = res.CASPath
 		rec.DownloadPath = res.DownloadPath
 		rec.Size = res.Size
+		rec.FilteredMaxGB = res.FilteredMaxGB
+		rec.FilteredRemoteGB = res.FilteredRemoteGB
 		rec.LastSeenAt = now
 		rec.LastProcessedAt = now
 		body, err := json.Marshal(rec)
@@ -166,6 +171,8 @@ func ComputeStats(db *bolt.DB, jobs []STRMJob) (Stats, error) {
 				stats.Skipped++
 			case "failed":
 				stats.Failed++
+			case "filtered":
+				stats.Filtered++
 			case "exception":
 				stats.Exception++
 			default:
@@ -174,7 +181,7 @@ func ComputeStats(db *bolt.DB, jobs []STRMJob) (Stats, error) {
 		}
 		return nil
 	})
-	stats.Processed = stats.Done + stats.Skipped
+	stats.Processed = stats.Done + stats.Skipped + stats.Filtered
 	stats.Unprocessed = stats.Total - stats.Processed
 	return stats, err
 }

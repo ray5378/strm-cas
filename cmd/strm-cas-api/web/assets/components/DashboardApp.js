@@ -5,8 +5,6 @@ import { StatsCards } from './StatsCards.js'
 import { ActionToolbar } from './ActionToolbar.js'
 import { CurrentTaskCard } from './CurrentTaskCard.js'
 import { RecordsPanel } from './RecordsPanel.js'
-import { DownloadedPanel } from './DownloadedPanel.js'
-import { CompletedPanel } from './CompletedPanel.js'
 import { DetailPanel } from './DetailPanel.js'
 import { ReconcileSummaryCard } from './ReconcileSummaryCard.js'
 import { ToastStack } from './ToastStack.js'
@@ -19,8 +17,6 @@ export const DashboardApp = {
     ActionToolbar,
     CurrentTaskCard,
     RecordsPanel,
-    DownloadedPanel,
-    CompletedPanel,
     DetailPanel,
     ReconcileSummaryCard,
     ToastStack,
@@ -32,7 +28,7 @@ export const DashboardApp = {
     const toast = useToast()
     const runtime = computed(() => store.state.overview?.runtime || {})
     const stats = computed(() => store.state.overview?.stats || {})
-    const autoRefreshLabel = computed(() => (runtime.value?.running ? '运行中 3s 自动刷新' : '空闲 15s 自动刷新'))
+    const autoRefreshLabel = computed(() => (store.state.runtimeSocketConnected ? 'WebSocket 已连接' : 'WebSocket 重连中'))
     const confirmState = reactive({ visible: false, title: '', message: '', confirmText: '确认', action: null })
     let timer = null
 
@@ -111,12 +107,10 @@ export const DashboardApp = {
     const scheduleRefresh = () => {
       if (timer) clearTimeout(timer)
       if (!store.state.autoRefreshEnabled) return
-      const delay = runtime.value?.running ? 3000 : 15000
-      timer = setTimeout(async () => {
+      const delay = 5000
+      timer = setTimeout(() => {
         try {
-          await store.refreshOverview()
-          await store.refreshDownloaded()
-          await store.refreshCompleted()
+          if (!store.state.runtimeSocketConnected) store.connectRuntimeSocket()
         } finally {
           scheduleRefresh()
         }
@@ -125,7 +119,9 @@ export const DashboardApp = {
 
     const toggleAutoRefresh = () => {
       store.state.autoRefreshEnabled = !store.state.autoRefreshEnabled
-      toast.info(store.state.autoRefreshEnabled ? '自动刷新已开启' : '自动刷新已关闭')
+      toast.info(store.state.autoRefreshEnabled ? 'WebSocket 自动重连已开启' : 'WebSocket 自动重连已关闭')
+      if (store.state.autoRefreshEnabled) store.connectRuntimeSocket()
+      else store.disconnectRuntimeSocket()
       scheduleRefresh()
     }
 
@@ -171,18 +167,14 @@ export const DashboardApp = {
       '停止任务',
     )
 
-    onMounted(async () => {
-      store.state.loading.initial = true
-      try {
-        await runAction(() => store.refreshAll())
-      } finally {
-        store.state.loading.initial = false
-      }
+    onMounted(() => {
+      store.connectRuntimeSocket()
       scheduleRefresh()
     })
 
     onBeforeUnmount(() => {
       if (timer) clearTimeout(timer)
+      store.disconnectRuntimeSocket()
     })
 
     return {
@@ -222,10 +214,9 @@ export const DashboardApp = {
 
       <div class="title">strm-cas 控制台</div>
       <div v-if="store.state.error" class="card" style="background:#fee2e2;color:#991b1b">{{ store.state.error }}</div>
-      <div v-if="store.state.loading.initial" class="card">页面初始化加载中...</div>
       <div v-if="store.state.errors.overview" class="card" style="background:#fff7ed;color:#9a3412">概览刷新失败：{{ store.state.errors.overview }}</div>
 
-      <StatsCards :stats="stats" />
+      <StatsCards :stats="stats" :loading="store.state.loading.overview" />
       <ReconcileSummaryCard :summary="store.state.reconcileSummary" />
 
       <ActionToolbar
@@ -291,30 +282,6 @@ export const DashboardApp = {
             @page-jump="(v) => { store.state.filters.page = v; runAction(() => store.refreshRecords()) }"
           />
 
-          <DownloadedPanel
-            :downloaded="store.state.downloaded"
-            :page="store.state.downloadedPage"
-            :loading="store.state.loading.downloaded"
-            :error-message="store.state.errors.downloaded"
-            @detail="(path) => runAction(() => store.loadDetail(path))"
-            @page-prev="() => { if (store.state.downloadedPage > 1) { store.state.downloadedPage--; runAction(() => store.refreshDownloaded()) } }"
-            @page-next="() => { store.state.downloadedPage++; runAction(() => store.refreshDownloaded()) }"
-            @page-jump="(v) => { store.state.downloadedPage = v; runAction(() => store.refreshDownloaded()) }"
-          />
-
-          <CompletedPanel
-            :completed="store.state.completed"
-            :status="store.state.completedStatus"
-            :page="store.state.completedPage"
-            :loading="store.state.loading"
-            :error-message="store.state.errors.completed"
-            @set-status="(v) => { store.state.completedStatus = v; store.state.completedPage = 1; runAction(() => store.refreshCompleted()) }"
-            @detail="(path) => runAction(() => store.loadDetail(path))"
-            @retry="(path) => runAction(() => store.retryOne(path), (res) => toastResult(res, '任务已重新加入队列'))"
-            @page-prev="() => { if (store.state.completedPage > 1) { store.state.completedPage--; runAction(() => store.refreshCompleted()) } }"
-            @page-next="() => { store.state.completedPage++; runAction(() => store.refreshCompleted()) }"
-            @page-jump="(v) => { store.state.completedPage = v; runAction(() => store.refreshCompleted()) }"
-          />
         </div>
 
         <div>

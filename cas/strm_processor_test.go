@@ -2,7 +2,10 @@ package cas
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,5 +56,111 @@ func TestWriteSummaryLog(t *testing.T) {
 	}
 	if len(out.Results) != 1 || out.Results[0].Status != "done" {
 		t.Fatalf("unexpected log content: %+v", out)
+	}
+}
+
+func TestBytesToWholeGBCeil(t *testing.T) {
+	oneGB := int64(1024 * 1024 * 1024)
+	if got := bytesToWholeGBCeil(oneGB); got != 1 {
+		t.Fatalf("unexpected ceil gb for exact 1GB: %d", got)
+	}
+	if got := bytesToWholeGBCeil(oneGB + 1); got != 2 {
+		t.Fatalf("unexpected ceil gb for 1GB+1B: %d", got)
+	}
+}
+
+func TestProcessSingleSTRMFiltersByGetContentLengthWhenHeadUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", 2*1024*1024*1024))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache err: %v", err)
+	}
+	tempPath := filepath.Join(cacheDir, urlHash(server.URL)+".part")
+	if err := os.WriteFile(tempPath, []byte("stale-cache"), 0o644); err != nil {
+		t.Fatalf("write temp cache err: %v", err)
+	}
+	job := STRMJob{STRMPath: filepath.Join(dir, "a.strm"), URL: server.URL}
+	res, err := ProcessSingleSTRMWithContext(nil, server.Client(), newRateLimiter(0), STRMProcessOptions{
+		CacheDir:         cacheDir,
+		DownloadDir:      filepath.Join(dir, "download"),
+		Mode:             Mode189PC,
+		MaxFileSizeBytes: 1 * 1024 * 1024 * 1024,
+	}, job)
+	if err != nil {
+		t.Fatalf("ProcessSingleSTRMWithContext err: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected filtered result, got nil")
+	}
+	if res.Status != "filtered" {
+		t.Fatalf("expected filtered status, got: %+v", res)
+	}
+	if res.FilteredMaxGB != 1 || res.FilteredRemoteGB != 3 {
+		t.Fatalf("unexpected filtered gb info: %+v", res)
+	}
+	if _, statErr := os.Stat(tempPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected temp cache removed, stat err: %v", statErr)
+	}
+}
+
+func TestProcessSingleSTRMRejectsMismatchedContentRange(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", "10")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Header.Get("Range") != "bytes=4-" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Range", "bytes 0-5/10")
+		w.Header().Set("Content-Length", "6")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = io.WriteString(w, "efghij")
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache err: %v", err)
+	}
+	tempPath := filepath.Join(cacheDir, urlHash(server.URL)+".part")
+	if err := os.WriteFile(tempPath, []byte("abcd"), 0o644); err != nil {
+		t.Fatalf("write temp part err: %v", err)
+	}
+	job := STRMJob{STRMPath: filepath.Join(dir, "a.strm"), URL: server.URL}
+	_, err := ProcessSingleSTRMWithContext(nil, server.Client(), newRateLimiter(0), STRMProcessOptions{
+		CacheDir:    cacheDir,
+		DownloadDir: filepath.Join(dir, "download"),
+		Mode:        Mode189PC,
+	}, job)
+	if err == nil {
+		t.Fatalf("expected content-range mismatch error, got nil")
+	}
+}
+
+func TestValidateFinalFileSize(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.bin")
+	if err := os.WriteFile(path, []byte("12345"), 0o644); err != nil {
+		t.Fatalf("write file err: %v", err)
+	}
+	if err := validateFinalFileSize(path, 5); err != nil {
+		t.Fatalf("expected size match, got err: %v", err)
+	}
+	if err := validateFinalFileSize(path, 6); err == nil {
+		t.Fatalf("expected size mismatch error, got nil")
 	}
 }

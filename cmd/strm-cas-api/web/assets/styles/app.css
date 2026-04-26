@@ -28,6 +28,7 @@ th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; vert
 .exception { background:#fde68a; color:#92400e; }
 .pending { background:#fef3c7; color:#92400e; }
 .skipped { background:#e0e7ff; color:#3730a3; }
+.filtered { background:#ede9fe; color:#6d28d9; }
 .main-grid { display:grid; grid-template-columns: 1.2fr .8fr; gap:16px; }
 .stat-value { font-size:30px; font-weight:700; }
 .warn { color:#991b1b; }

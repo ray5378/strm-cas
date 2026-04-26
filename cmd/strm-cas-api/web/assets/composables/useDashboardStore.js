@@ -1,27 +1,30 @@
 import { reactive } from '../vendor/vue.esm-browser.prod.js'
 import { dashboardService } from '../services/dashboardService.js'
 
+function wsURL(path) {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}${path}`
+}
+
 export function useDashboardStore() {
   const state = reactive({
     overview: null,
-    settings: { concurrency: 2, total_rate_limit_mb: 0 },
+    settings: { concurrency: 2, total_rate_limit_mb: 0, max_file_size_gb: 0 },
     records: { total: 0, items: [] },
-    downloaded: { total: 0, items: [] },
-    completed: { total: 0, items: [] },
     detail: null,
     reconcileSummary: null,
     selectedPaths: [],
     filters: { status: '', search: '', page: 1, page_size: 10 },
-    downloadedPage: 1,
-    completedPage: 1,
-    completedStatus: '',
     startMode: 'pending',
     error: '',
-    errors: { records: '', downloaded: '', completed: '', detail: '', overview: '' },
+    errors: { records: '', detail: '', overview: '' },
     confirmClear: false,
     autoRefreshEnabled: true,
+    runtimeSocketConnected: false,
+    runtimeSocketError: '',
     loading: {
       initial: false,
+      overview: false,
       refreshAll: false,
       scan: false,
       start: false,
@@ -32,12 +35,14 @@ export function useDashboardStore() {
       reconcileDB: false,
       clearDB: false,
       records: false,
-      downloaded: false,
-      completed: false,
       detail: false,
       retryOne: '',
     },
   })
+
+  let runtimeSocket = null
+  let runtimeReconnectTimer = null
+  let runtimeSocketClosedByUser = false
 
   async function wrap(action, loadingKey) {
     try {
@@ -57,7 +62,11 @@ export function useDashboardStore() {
     if (idx >= 0) state.selectedPaths.splice(idx, 1)
     else state.selectedPaths.push(path)
   }
-  function clearSelected() { state.selectedPaths.splice(0, state.selectedPaths.length) }
+
+  function clearSelected() {
+    state.selectedPaths.splice(0, state.selectedPaths.length)
+  }
+
   function toggleSelectAllCurrentPage(paths) {
     const valid = paths.filter(Boolean)
     const allSelected = valid.length > 0 && valid.every(path => state.selectedPaths.includes(path))
@@ -68,145 +77,275 @@ export function useDashboardStore() {
       }
       return
     }
-    for (const path of valid) if (!state.selectedPaths.includes(path)) state.selectedPaths.push(path)
+    for (const path of valid) {
+      if (!state.selectedPaths.includes(path)) state.selectedPaths.push(path)
+    }
+  }
+
+  function applyOverviewData(data) {
+    state.overview = data
+    state.errors.overview = ''
+    if (state.overview?.settings) {
+      state.settings = {
+        concurrency: state.overview.settings.concurrency || 1,
+        total_rate_limit_mb: state.overview.settings.total_rate_limit_mb || 0,
+        max_file_size_gb: state.overview.settings.max_file_size_gb || 0,
+      }
+    }
+  }
+
+  function clearReadLoading() {
+    state.loading.initial = false
+    state.loading.overview = false
+    state.loading.records = false
+    state.loading.detail = false
+    state.loading.refreshAll = false
+  }
+
+  function clearOverviewLoading() {
+    state.loading.initial = false
+    state.loading.overview = false
+  }
+
+  function markReadLoading() {
+    state.loading.initial = true
+    state.loading.overview = true
+    state.loading.records = true
+    if (state.detail?.strm_path) state.loading.detail = true
+  }
+
+  function applyDashboardSnapshot(payload) {
+    if (payload?.overview) applyOverviewData(payload.overview)
+    if (payload?.records) {
+      state.records = payload.records
+      state.errors.records = ''
+      state.loading.records = false
+    }
+    if (payload && 'detail' in payload) {
+      state.detail = payload.detail || null
+      state.errors.detail = ''
+      state.loading.detail = false
+    }
+    state.loading.refreshAll = false
+  }
+
+  function applyOverviewSnapshot(payload) {
+    if (payload?.overview) applyOverviewData(payload.overview)
+    clearOverviewLoading()
+  }
+
+  function applyRuntimeSnapshot(runtime) {
+    const prev = state.overview || {}
+    state.overview = { ...prev, runtime: runtime || {} }
+  }
+
+  function requestDashboardSnapshot() {
+    if (!runtimeSocket || runtimeSocket.readyState !== WebSocket.OPEN) return false
+    markReadLoading()
+    state.errors.overview = ''
+    state.errors.records = ''
+    state.errors.detail = ''
+    runtimeSocket.send(JSON.stringify({
+      type: 'subscribe',
+      status: state.filters.status || '',
+      search: state.filters.search || '',
+      page: state.filters.page || 1,
+      page_size: state.filters.page_size || 10,
+      detail_path: state.detail?.strm_path || '',
+    }))
+    return true
+  }
+
+  function connectRuntimeSocket() {
+    runtimeSocketClosedByUser = false
+    if (runtimeSocket) {
+      try { runtimeSocket.close() } catch {}
+      runtimeSocket = null
+    }
+    const ws = new WebSocket(wsURL('/api/runtime/ws'))
+    runtimeSocket = ws
+    ws.onopen = () => {
+      state.runtimeSocketConnected = true
+      state.runtimeSocketError = ''
+      requestDashboardSnapshot()
+    }
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data?.type === 'overview') {
+          applyOverviewSnapshot(data)
+        } else if (data?.type === 'dashboard') {
+          applyDashboardSnapshot(data)
+        } else if (data?.type === 'runtime') {
+          applyRuntimeSnapshot(data.runtime || {})
+        }
+      } catch (e) {
+        state.runtimeSocketError = e.message || String(e)
+      }
+    }
+    ws.onerror = () => {
+      state.runtimeSocketError = 'websocket 连接异常'
+      state.errors.overview = state.errors.overview || state.runtimeSocketError
+      state.errors.records = state.errors.records || state.runtimeSocketError
+      if (state.detail?.strm_path) state.errors.detail = state.errors.detail || state.runtimeSocketError
+    }
+    ws.onclose = () => {
+      state.runtimeSocketConnected = false
+      runtimeSocket = null
+      if (runtimeSocketClosedByUser || !state.autoRefreshEnabled) return
+      clearTimeout(runtimeReconnectTimer)
+      runtimeReconnectTimer = setTimeout(() => {
+        connectRuntimeSocket()
+      }, 2000)
+    }
+  }
+
+  function disconnectRuntimeSocket() {
+    runtimeSocketClosedByUser = true
+    state.runtimeSocketConnected = false
+    clearTimeout(runtimeReconnectTimer)
+    runtimeReconnectTimer = null
+    clearReadLoading()
+    if (runtimeSocket) {
+      try { runtimeSocket.close() } catch {}
+      runtimeSocket = null
+    }
   }
 
   async function refreshOverview() {
-    try {
-      state.overview = await dashboardService.overview()
-      state.errors.overview = ''
-      if (state.overview?.settings) {
-        state.settings = {
-          concurrency: state.overview.settings.concurrency || 1,
-          total_rate_limit_mb: state.overview.settings.total_rate_limit_mb || 0,
-        }
-      }
-    } catch (e) {
-      state.errors.overview = e.message || String(e)
-      throw e
-    }
+    return wrap(async () => {
+      requestDashboardSnapshot()
+    }, null)
   }
+
   async function refreshSettings() {
     return wrap(async () => {
-      const s = await dashboardService.settings()
-      state.settings = { concurrency: s.concurrency || 1, total_rate_limit_mb: s.total_rate_limit_mb || 0 }
-    }, 'saveSettings')
+      requestDashboardSnapshot()
+    }, null)
   }
+
   async function saveSettings() {
     return wrap(async () => {
       const s = await dashboardService.saveSettings(state.settings)
-      state.settings = { concurrency: s.concurrency || 1, total_rate_limit_mb: s.total_rate_limit_mb || 0 }
+      state.settings = {
+        concurrency: s.concurrency || 1,
+        total_rate_limit_mb: s.total_rate_limit_mb || 0,
+        max_file_size_gb: s.max_file_size_gb || 0,
+      }
+      requestDashboardSnapshot()
       return s
     }, 'saveSettings')
   }
+
   async function refreshRecords() {
     return wrap(async () => {
-      state.records = await dashboardService.records(state.filters)
-      state.errors.records = ''
-    }, 'records')
+      requestDashboardSnapshot()
+    }, null)
   }
-  async function refreshDownloaded() {
-    return wrap(async () => {
-      state.downloaded = await dashboardService.runtimeDownloaded({ page: state.downloadedPage, page_size: 10 })
-      state.errors.downloaded = ''
-    }, 'downloaded')
-  }
-  async function refreshCompleted() {
-    return wrap(async () => {
-      state.completed = await dashboardService.runtimeCompleted({ page: state.completedPage, page_size: 10, status: state.completedStatus })
-      state.errors.completed = ''
-    }, 'completed')
-  }
+
   async function refreshAll() {
     return wrap(async () => {
-      await Promise.all([refreshOverview(), refreshSettings(), refreshRecords(), refreshDownloaded(), refreshCompleted()])
-    }, 'refreshAll')
+      state.loading.refreshAll = true
+      requestDashboardSnapshot()
+    }, null)
   }
+
   async function loadDetail(path) {
     return wrap(async () => {
-      state.detail = await dashboardService.recordDetail(path)
-      state.errors.detail = ''
-    }, 'detail')
+      state.detail = state.detail?.strm_path === path ? state.detail : { strm_path: path }
+      requestDashboardSnapshot()
+    }, null)
   }
+
   async function scan() {
     return wrap(async () => {
       const res = await dashboardService.refreshScan()
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'scan')
   }
+
   async function reconcileDB() {
     return wrap(async () => {
       const res = await dashboardService.reconcileDB()
       state.reconcileSummary = res || null
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'reconcileDB')
   }
+
   async function start() {
     return wrap(async () => {
       const res = await dashboardService.startTasks({ mode: state.startMode, status: state.filters.status, search: state.filters.search })
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'start')
   }
+
   async function startCurrentFilter() {
     return wrap(async () => {
       const res = await dashboardService.startTasks({ mode: 'current_filter', status: state.filters.status, search: state.filters.search })
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'start')
   }
+
   async function startSelected() {
     return wrap(async () => {
       const res = await dashboardService.startSelectedTasks(state.selectedPaths)
       clearSelected()
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'start')
   }
+
   async function stopTasks() {
     return wrap(async () => {
       const res = await dashboardService.stopTasks()
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'stop')
   }
+
   async function stopAfterCurrentTasks() {
     return wrap(async () => {
       const res = await dashboardService.stopAfterCurrentTasks()
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'stopAfterCurrent')
   }
+
   async function retryFailed() {
     return wrap(async () => {
       const res = await dashboardService.retryFailedTasks()
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'retryFailed')
   }
+
   async function retrySelected() {
     return wrap(async () => {
       const res = await dashboardService.retrySelectedTasks({ paths: state.selectedPaths })
       clearSelected()
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'retryFailed')
   }
+
   async function retryByFilter() {
     return wrap(async () => {
       const res = await dashboardService.retrySelectedTasks({ status: state.filters.status, search: state.filters.search })
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'retryFailed')
   }
+
   async function retryOne(path) {
     state.loading.retryOne = path
     try {
       state.error = ''
       const res = await dashboardService.retryTask(path)
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     } catch (e) {
       state.error = e.message || String(e)
@@ -215,13 +354,14 @@ export function useDashboardStore() {
       state.loading.retryOne = ''
     }
   }
+
   async function clearDB() {
     return wrap(async () => {
       const res = await dashboardService.clearDB()
       state.detail = null
       state.confirmClear = false
       clearSelected()
-      await refreshAll()
+      requestDashboardSnapshot()
       return res
     }, 'clearDB')
   }
@@ -235,8 +375,6 @@ export function useDashboardStore() {
     refreshSettings,
     saveSettings,
     refreshRecords,
-    refreshDownloaded,
-    refreshCompleted,
     refreshAll,
     loadDetail,
     scan,
@@ -251,5 +389,7 @@ export function useDashboardStore() {
     retryByFilter,
     retryOne,
     clearDB,
+    connectRuntimeSocket,
+    disconnectRuntimeSocket,
   }
 }

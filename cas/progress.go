@@ -7,28 +7,38 @@ import (
 	"time"
 )
 
-type rateLimiter struct {
+type RateLimiter struct {
 	mu       sync.Mutex
 	bytesPer int64
 	last     time.Time
 }
 
-func newRateLimiter(bytesPerSec int64) *rateLimiter {
-	if bytesPerSec <= 0 {
-		return nil
-	}
-	return &rateLimiter{bytesPer: bytesPerSec}
+func newRateLimiter(bytesPerSec int64) *RateLimiter {
+	return &RateLimiter{bytesPer: bytesPerSec}
 }
 
-func NewSharedRateLimiter(bytesPerSec int64) *rateLimiter {
+func NewSharedRateLimiter(bytesPerSec int64) *RateLimiter {
 	return newRateLimiter(bytesPerSec)
 }
 
-func (r *rateLimiter) chunkSize(max int) int {
+func (r *RateLimiter) SetBytesPerSec(bytesPerSec int64) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bytesPer = bytesPerSec
+	r.last = time.Time{}
+}
+
+func (r *RateLimiter) chunkSize(max int) int {
 	if r == nil || r.bytesPer <= 0 {
 		return max
 	}
-	chunk := int(r.bytesPer / 8)
+	r.mu.Lock()
+	bytesPer := r.bytesPer
+	r.mu.Unlock()
+	chunk := int(bytesPer / 8)
 	if chunk < 1024 {
 		chunk = 1024
 	}
@@ -44,16 +54,21 @@ func (r *rateLimiter) chunkSize(max int) int {
 	return chunk
 }
 
-func (r *rateLimiter) wait(ctx context.Context, n int) error {
-	if r == nil || r.bytesPer <= 0 || n <= 0 {
+func (r *RateLimiter) wait(ctx context.Context, n int) error {
+	if r == nil || n <= 0 {
 		return nil
 	}
 	r.mu.Lock()
+	bytesPer := r.bytesPer
+	if bytesPer <= 0 {
+		r.mu.Unlock()
+		return nil
+	}
 	now := time.Now()
 	if r.last.Before(now) {
 		r.last = now
 	}
-	d := time.Duration(int64(time.Second) * int64(n) / r.bytesPer)
+	d := time.Duration(int64(time.Second) * int64(n) / bytesPer)
 	target := r.last.Add(d)
 	wait := time.Until(target)
 	if wait < 0 {
@@ -79,7 +94,7 @@ type countingReader struct {
 	reader  io.Reader
 	total   int64
 	onRead  func(total int64)
-	limiter *rateLimiter
+	limiter *RateLimiter
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {

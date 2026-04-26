@@ -30,6 +30,8 @@ export const DetailPanel = {
         field('下载路径', this.detail.download_path),
         field('文件名', this.detail.file_name),
         field('文件大小', this.detail.size),
+        field('过滤阈值(GB)', this.detail.filtered_max_gb),
+        field('命中过滤大小(GB)', this.detail.filtered_remote_gb),
       ]
     },
     timeInfo() {

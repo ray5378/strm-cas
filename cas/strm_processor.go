@@ -27,30 +27,33 @@ type STRMJob struct {
 }
 
 type STRMProcessOptions struct {
-	STRMRoot        string
-	CacheDir        string
-	DownloadDir     string
-	Mode            Mode
-	HTTPTimeout     time.Duration
-	UserAgent       string
-	KeepDownload    bool
-	SkipExistingCAS bool
-	LogPath         string
-	DBPath          string
-	Concurrency     int
-	TotalRateLimit  int64
-	Context         context.Context
-	OnProgress      func(ProgressInfo)
-	OnResult        func(STRMProcessResult)
+	STRMRoot            string
+	CacheDir            string
+	DownloadDir         string
+	Mode                Mode
+	HTTPTimeout         time.Duration
+	UserAgent           string
+	KeepDownload        bool
+	SkipExistingCAS     bool
+	MaxFileSizeBytes    int64
+	LogPath             string
+	DBPath              string
+	Concurrency         int
+	TotalRateLimit      int64
+	Context             context.Context
+	OnProgress          func(ProgressInfo)
+	OnResult            func(STRMProcessResult)
 }
 
 type STRMProcessResult struct {
-	Job          STRMJob `json:"job"`
-	DownloadPath string  `json:"download_path,omitempty"`
-	CASPath      string  `json:"cas_path,omitempty"`
-	Size         int64   `json:"size,omitempty"`
-	Status       string  `json:"status"`
-	Message      string  `json:"message,omitempty"`
+	Job              STRMJob `json:"job"`
+	DownloadPath     string  `json:"download_path,omitempty"`
+	CASPath          string  `json:"cas_path,omitempty"`
+	Size             int64   `json:"size,omitempty"`
+	FilteredMaxGB    int     `json:"filtered_max_gb,omitempty"`
+	FilteredRemoteGB int64   `json:"filtered_remote_gb,omitempty"`
+	Status           string  `json:"status"`
+	Message          string  `json:"message,omitempty"`
 }
 
 type STRMProcessSummary struct {
@@ -223,7 +226,7 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 	return ProcessSingleSTRMWithContext(opts.Context, client, newRateLimiter(opts.TotalRateLimit), opts, job)
 }
 
-func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limiter *rateLimiter, opts STRMProcessOptions, job STRMJob) (*STRMProcessResult, error) {
+func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limiter *RateLimiter, opts STRMProcessOptions, job STRMJob) (*STRMProcessResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -262,6 +265,9 @@ func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limi
 	}
 
 	tempPath := filepath.Join(opts.CacheDir, urlHash(job.URL)+".part")
+	if opts.MaxFileSizeBytes > 0 && meta != nil && meta.TotalSize > opts.MaxFileSizeBytes {
+		return filteredResult(job, filepath.Join(downloadDir, nameHint), casHintPath, tempPath, meta.TotalSize, opts)
+	}
 	partialSize := fileSizeIfExists(tempPath)
 	finalPath := filepath.Join(downloadDir, nameHint)
 	casPath := filepath.Join(downloadDir, nameHint+".cas")
@@ -310,7 +316,11 @@ func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limi
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
 	}
-	progress(ProgressInfo{Job: job, Stage: "downloading", FileName: nameHint, DownloadedBytes: partialSize, TotalBytes: contentTotal(resp.ContentLength, partialSize), Message: "downloading"})
+	if resp.StatusCode == http.StatusPartialContent && partialSize > 0 {
+		if err := validateContentRange(resp.Header.Get("Content-Range"), partialSize); err != nil {
+			return nil, err
+		}
+	}
 
 	name := resolveDownloadName(job, resp)
 	finalPath = filepath.Join(downloadDir, name)
@@ -322,6 +332,11 @@ func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limi
 		}
 		return res, nil
 	}
+	remoteTotal := contentTotal(resp.ContentLength, partialSize)
+	if opts.MaxFileSizeBytes > 0 && remoteTotal > opts.MaxFileSizeBytes {
+		return filteredResult(job, finalPath, casPath, tempPath, remoteTotal, opts)
+	}
+	progress(ProgressInfo{Job: job, Stage: "downloading", FileName: nameHint, DownloadedBytes: partialSize, TotalBytes: remoteTotal, Message: "downloading"})
 
 	var f *os.File
 	if resp.StatusCode == http.StatusPartialContent && partialSize > 0 {
@@ -346,6 +361,10 @@ func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limi
 	}
 
 	totalSize := partialSize + written
+	expectedTotal := contentTotal(resp.ContentLength, partialSize)
+	if expectedTotal > 0 && totalSize != expectedTotal {
+		return nil, fmt.Errorf("download size mismatch: got %d want %d", totalSize, expectedTotal)
+	}
 	progress(ProgressInfo{Job: job, Stage: "downloaded", FileName: name, DownloadPath: finalPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "downloaded"})
 	return finalizeRecoveredPart(tempPath, finalPath, casPath, totalSize, opts, job, progress)
 }
@@ -355,6 +374,9 @@ func finalizeRecoveredPart(tempPath, finalPath, casPath string, totalSize int64,
 		return nil, err
 	}
 	if err := os.Rename(tempPath, finalPath); err != nil {
+		return nil, err
+	}
+	if err := validateFinalFileSize(finalPath, totalSize); err != nil {
 		return nil, err
 	}
 	progress(ProgressInfo{Job: job, Stage: "downloaded", FileName: filepath.Base(finalPath), DownloadPath: finalPath, DownloadedBytes: totalSize, TotalBytes: totalSize, Message: "downloaded"})
@@ -426,6 +448,90 @@ func contentLengthFromHeader(v string) int64 {
 		return 0
 	}
 	return n
+}
+
+func validateContentRange(header string, expectedStart int64) error {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return fmt.Errorf("missing Content-Range for partial response")
+	}
+	if !strings.HasPrefix(header, "bytes ") {
+		return fmt.Errorf("invalid Content-Range: %s", header)
+	}
+	rangePart := strings.TrimPrefix(header, "bytes ")
+	slash := strings.Index(rangePart, "/")
+	if slash <= 0 {
+		return fmt.Errorf("invalid Content-Range: %s", header)
+	}
+	span := rangePart[:slash]
+	dash := strings.Index(span, "-")
+	if dash <= 0 {
+		return fmt.Errorf("invalid Content-Range: %s", header)
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(span[:dash]), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid Content-Range start: %s", header)
+	}
+	if start != expectedStart {
+		return fmt.Errorf("content-range start mismatch: got %d want %d", start, expectedStart)
+	}
+	return nil
+}
+
+func validateFinalFileSize(path string, expected int64) error {
+	if expected <= 0 {
+		return nil
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		return fmt.Errorf("final path is a directory: %s", path)
+	}
+	if st.Size() != expected {
+		return fmt.Errorf("final file size mismatch: got %d want %d", st.Size(), expected)
+	}
+	return nil
+}
+
+func bytesToWholeGB(size int64) int {
+	if size <= 0 {
+		return 0
+	}
+	return int(size / (1024 * 1024 * 1024))
+}
+
+func filteredResult(job STRMJob, downloadPath, casPath, tempPath string, remoteTotal int64, opts STRMProcessOptions) (*STRMProcessResult, error) {
+	if tempPath != "" {
+		if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	limitGB := bytesToWholeGB(opts.MaxFileSizeBytes)
+	remoteGB := bytesToWholeGBCeil(remoteTotal)
+	res := &STRMProcessResult{
+		Job:              job,
+		DownloadPath:     downloadPath,
+		CASPath:          casPath,
+		Size:             remoteTotal,
+		FilteredMaxGB:    limitGB,
+		FilteredRemoteGB: remoteGB,
+		Status:           "filtered",
+		Message:          fmt.Sprintf("file size %d GB exceeds limit %d GB", remoteGB, limitGB),
+	}
+	if opts.OnResult != nil {
+		opts.OnResult(*res)
+	}
+	return res, nil
+}
+
+func bytesToWholeGBCeil(size int64) int64 {
+	if size <= 0 {
+		return 0
+	}
+	gb := int64(1024 * 1024 * 1024)
+	return (size + gb - 1) / gb
 }
 
 func resolveDownloadName(job STRMJob, resp *http.Response) string {

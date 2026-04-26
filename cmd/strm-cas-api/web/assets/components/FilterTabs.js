@@ -1,4 +1,4 @@
-const FILTERS = [['','全部'], ['pending','未处理'], ['done','已完成'], ['failed','失败'], ['exception','异常'], ['skipped','已跳过']]
+const FILTERS = [['','全部'], ['pending','未处理'], ['done','已完成'], ['failed','失败'], ['exception','异常'], ['skipped','已跳过'], ['filtered','已过滤']]
 
 export const FilterTabs = {
   props: { modelValue: { type: String, default: '' } },

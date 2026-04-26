@@ -4,6 +4,7 @@ export const STATUS_TEXT = {
   failed: '失败',
   exception: '异常',
   skipped: '已跳过',
+  filtered: '已过滤',
 }
 
 export const STAGE_TEXT = {
