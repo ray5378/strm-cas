@@ -34,6 +34,7 @@ type taskSettings struct {
 
 type wsClient struct {
 	ch         chan []byte
+	done       chan struct{}
 	filters    cas.QueryOptions
 	detailPath string
 }
@@ -381,7 +382,7 @@ func (a *app) handleRuntimeWS(w http.ResponseWriter, r *http.Request) {
 	if _, err := rw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n\r\n"); err != nil { _ = conn.Close(); return }
 	if err := rw.Flush(); err != nil { _ = conn.Close(); return }
 
-	client := &wsClient{ch: make(chan []byte, 16), filters: cas.QueryOptions{Page: 1, PageSize: 10}}
+	client := &wsClient{ch: make(chan []byte, 16), done: make(chan struct{}), filters: cas.QueryOptions{Page: 1, PageSize: 10}}
 	a.wsClientsMu.Lock()
 	a.wsClients[client] = struct{}{}
 	a.wsClientsMu.Unlock()
@@ -389,7 +390,11 @@ func (a *app) handleRuntimeWS(w http.ResponseWriter, r *http.Request) {
 		a.wsClientsMu.Lock()
 		delete(a.wsClients, client)
 		a.wsClientsMu.Unlock()
-		close(client.ch)
+		select {
+		case <-client.done:
+		default:
+			close(client.done)
+		}
 		_ = conn.Close()
 	}()
 
@@ -434,9 +439,14 @@ func (a *app) handleRuntimeWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	for msg := range client.ch {
-		if err := writeWebSocketTextFrame(conn, msg); err != nil {
+	for {
+		select {
+		case <-client.done:
 			return
+		case msg := <-client.ch:
+			if err := writeWebSocketTextFrame(conn, msg); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -1024,6 +1034,25 @@ func (a *app) buildDashboardPayload(filters cas.QueryOptions, detailPath string)
 	})
 }
 
+func (a *app) enqueueClientMessage(client *wsClient, payload []byte) bool {
+	if client == nil {
+		return false
+	}
+	select {
+	case <-client.done:
+		return false
+	default:
+	}
+	select {
+	case <-client.done:
+		return false
+	case client.ch <- payload:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *app) pushClientOverview(client *wsClient) {
 	if client == nil {
 		return
@@ -1032,10 +1061,7 @@ func (a *app) pushClientOverview(client *wsClient) {
 	if err != nil {
 		return
 	}
-	select {
-	case client.ch <- payload:
-	default:
-	}
+	a.enqueueClientMessage(client, payload)
 }
 
 func (a *app) pushClientSnapshot(client *wsClient) {
@@ -1050,10 +1076,7 @@ func (a *app) pushClientSnapshot(client *wsClient) {
 	if err != nil {
 		return
 	}
-	select {
-	case client.ch <- payload:
-	default:
-	}
+	a.enqueueClientMessage(client, payload)
 }
 
 func (a *app) pushRuntimeSnapshotNow() {
@@ -1072,10 +1095,7 @@ func (a *app) pushRuntimeSnapshotNow() {
 	}
 	a.wsClientsMu.RUnlock()
 	for _, client := range clients {
-		select {
-		case client.ch <- payload:
-		default:
-		}
+		a.enqueueClientMessage(client, payload)
 	}
 }
 
