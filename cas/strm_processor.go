@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,6 +91,9 @@ func ProcessSTRMTree(opts STRMProcessOptions) (*STRMProcessSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := cleanupStaleCacheParts(opts.CacheDir, opts.Concurrency); err != nil {
+		return nil, err
+	}
 	db, err := OpenStateDB(opts.DBPath)
 	if err != nil {
 		return nil, err
@@ -156,6 +160,52 @@ func ProcessSTRMTree(opts STRMProcessOptions) (*STRMProcessSummary, error) {
 		}
 	}
 	return summary, nil
+}
+
+func cleanupStaleCacheParts(cacheDir string, keep int) error {
+	if strings.TrimSpace(cacheDir) == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	type cachePart struct {
+		path    string
+		modTime time.Time
+	}
+	parts := make([]cachePart, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".part") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		parts = append(parts, cachePart{path: filepath.Join(cacheDir, entry.Name()), modTime: info.ModTime()})
+	}
+	if keep < 0 {
+		keep = 0
+	}
+	if len(parts) <= keep {
+		return nil
+	}
+	sort.Slice(parts, func(i, j int) bool {
+		if parts[i].modTime.Equal(parts[j].modTime) {
+			return parts[i].path > parts[j].path
+		}
+		return parts[i].modTime.After(parts[j].modTime)
+	})
+	for _, part := range parts[keep:] {
+		if err := os.Remove(part.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func DiscoverSTRMJobs(root string) ([]STRMJob, error) {

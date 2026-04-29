@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestExtractSTRMLink(t *testing.T) {
@@ -173,6 +174,43 @@ func TestProcessSingleSTRMRejectsMismatchedContentRange(t *testing.T) {
 	}, job)
 	if err == nil {
 		t.Fatalf("expected content-range mismatch error, got nil")
+	}
+}
+
+func TestCleanupStaleCachePartsKeepsNewestByConcurrency(t *testing.T) {
+	dir := t.TempDir()
+	files := []string{"old-a.part", "mid-b.part", "new-c.part", "new-d.part"}
+	base := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	for i, name := range files {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(name), 0o644); err != nil {
+			t.Fatalf("write %s err: %v", name, err)
+		}
+		mtime := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s err: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ignore.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write ignore err: %v", err)
+	}
+	if err := cleanupStaleCacheParts(dir, 2); err != nil {
+		t.Fatalf("cleanupStaleCacheParts err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "new-c.part")); err != nil {
+		t.Fatalf("expected new-c.part kept, err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "new-d.part")); err != nil {
+		t.Fatalf("expected new-d.part kept, err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "mid-b.part")); !os.IsNotExist(err) {
+		t.Fatalf("expected mid-b.part removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "old-a.part")); !os.IsNotExist(err) {
+		t.Fatalf("expected old-a.part removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ignore.txt")); err != nil {
+		t.Fatalf("expected ignore.txt untouched, err: %v", err)
 	}
 }
 
