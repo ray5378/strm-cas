@@ -229,7 +229,7 @@ func matchExistingCAS(rec StateRecord, job STRMJob, casIndex map[string][]string
 
 func inferredCASNames(job STRMJob) []string {
 	seen := map[string]struct{}{}
-	out := make([]string, 0, 6)
+	out := make([]string, 0, 16)
 	add := func(name string) {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -246,17 +246,30 @@ func inferredCASNames(job STRMJob) []string {
 		seen[key] = struct{}{}
 		out = append(out, name)
 	}
-	add(strings.TrimSuffix(filepath.Base(job.STRMPath), filepath.Ext(job.STRMPath)))
+	addMediaVariants := func(base string) {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return
+		}
+		add(base)
+		if ext := strings.ToLower(filepath.Ext(base)); ext != "" && ext != ".cas" {
+			return
+		}
+		for _, mediaExt := range []string{".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".m4v", ".flv", ".mov", ".wmv"} {
+			add(base + mediaExt)
+		}
+	}
+	addMediaVariants(strings.TrimSuffix(filepath.Base(job.STRMPath), filepath.Ext(job.STRMPath)))
 	if u, err := url.Parse(job.URL); err == nil {
 		base := path.Base(u.Path)
 		if base != "" && base != "/" && base != "." {
-			add(base)
-			add(decodeURLFileName(base))
+			addMediaVariants(base)
+			addMediaVariants(decodeURLFileName(base))
 		}
 		for _, key := range []string{"filename", "fileName", "name"} {
 			if v := strings.TrimSpace(u.Query().Get(key)); v != "" {
-				add(v)
-				add(decodeURLFileName(v))
+				addMediaVariants(v)
+				addMediaVariants(decodeURLFileName(v))
 			}
 		}
 	}
