@@ -229,7 +229,7 @@ func matchExistingCAS(rec StateRecord, job STRMJob, casIndex map[string][]string
 
 func inferredCASNames(job STRMJob) []string {
 	seen := map[string]struct{}{}
-	out := make([]string, 0, 4)
+	out := make([]string, 0, 6)
 	add := func(name string) {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -251,6 +251,13 @@ func inferredCASNames(job STRMJob) []string {
 		base := path.Base(u.Path)
 		if base != "" && base != "/" && base != "." {
 			add(base)
+			add(decodeURLFileName(base))
+		}
+		for _, key := range []string{"filename", "fileName", "name"} {
+			if v := strings.TrimSpace(u.Query().Get(key)); v != "" {
+				add(v)
+				add(decodeURLFileName(v))
+			}
 		}
 	}
 	return out
