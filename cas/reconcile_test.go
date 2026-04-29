@@ -43,8 +43,8 @@ func TestInferredCASNamesAddsCommonMediaExtensionVariantsForSTRMBase(t *testing.
 	names := inferredCASNames(job)
 	wants := map[string]bool{
 		"S03E11.1080p.DSNP.WEB-DL.DDP5.1.H.264-HiveWeb.cas":     false,
-		"S03E11.1080p.DSNP.WEB-DL.DDP5.1.H.264-HiveWeb.mkv.cas": true,
-		"S03E11.1080p.DSNP.WEB-DL.DDP5.1.H.264-HiveWeb.mp4.cas": true,
+		"S03E11.1080p.DSNP.WEB-DL.DDP5.1.H.264-HiveWeb.mkv.cas": false,
+		"S03E11.1080p.DSNP.WEB-DL.DDP5.1.H.264-HiveWeb.mp4.cas": false,
 	}
 	for _, name := range names {
 		if _, ok := wants[name]; ok {

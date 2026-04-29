@@ -246,16 +246,20 @@ func inferredCASNames(job STRMJob) []string {
 		seen[key] = struct{}{}
 		out = append(out, name)
 	}
+	mediaExts := []string{".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".m4v", ".flv", ".mov", ".wmv"}
 	addMediaVariants := func(base string) {
 		base = strings.TrimSpace(base)
 		if base == "" {
 			return
 		}
 		add(base)
-		if ext := strings.ToLower(filepath.Ext(base)); ext != "" && ext != ".cas" {
-			return
+		lower := strings.ToLower(base)
+		for _, mediaExt := range mediaExts {
+			if strings.HasSuffix(lower, mediaExt) {
+				return
+			}
 		}
-		for _, mediaExt := range []string{".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".m4v", ".flv", ".mov", ".wmv"} {
+		for _, mediaExt := range mediaExts {
 			add(base + mediaExt)
 		}
 	}
