@@ -230,7 +230,7 @@ export const DashboardApp = {
         :settings="store.state.settings"
         @scan="runAction(() => store.scan(), '扫描完成')"
         @reconcile-db="runAction(() => store.reconcileDB(), (res) => toastResult(res, '数据库已纠正'))"
-        @rename-cas="runAction(() => store.renameCAS(), (res) => `CAS 文件名已纠正：重命名 ${res?.renamed || 0}，跳过 ${res?.skipped || 0}，冲突 ${res?.conflicts || 0}`)"
+        @rename-cas="runAction(() => store.renameCAS(), (res) => 'CAS 文件名已纠正：重命名 ' + (res?.renamed || 0) + '，跳过 ' + (res?.skipped || 0) + '，冲突 ' + (res?.conflicts || 0))"
         @start="runAction(() => store.start(), (res) => toastResult(res, '任务已启动'))"
         @stop-after-current="confirmStopAfterCurrentTasks"
         @stop="confirmStopTasks"
