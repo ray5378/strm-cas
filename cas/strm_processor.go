@@ -276,7 +276,7 @@ func ProcessSingleSTRM(client *http.Client, opts STRMProcessOptions, job STRMJob
 	return ProcessSingleSTRMWithContext(opts.Context, client, newRateLimiter(opts.TotalRateLimit), opts, job)
 }
 
-func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limiter *RateLimiter, opts STRMProcessOptions, job STRMJob) (*STRMProcessResult, error) {
+func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limiter *RateLimiter, opts STRMProcessOptions, job STRMJob) (res *STRMProcessResult, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -315,6 +315,12 @@ func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limi
 	}
 
 	tempPath := filepath.Join(opts.CacheDir, urlHash(job.URL)+".part")
+	defer func() {
+		if err == nil || tempPath == "" {
+			return
+		}
+		_ = os.Remove(tempPath)
+	}()
 	if opts.MaxFileSizeBytes > 0 && meta != nil && meta.TotalSize > opts.MaxFileSizeBytes {
 		return filteredResult(job, filepath.Join(downloadDir, nameHint), casHintPath, tempPath, meta.TotalSize, opts)
 	}

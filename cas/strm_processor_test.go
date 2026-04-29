@@ -175,6 +175,47 @@ func TestProcessSingleSTRMRejectsMismatchedContentRange(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected content-range mismatch error, got nil")
 	}
+	if _, statErr := os.Stat(tempPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected temp cache removed after failure, stat err: %v", statErr)
+	}
+}
+
+func TestProcessSingleSTRMClearsPartialCacheOnDownloadFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", "10")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatalf("response writer does not support hijacking")
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("hijack err: %v", err)
+		}
+		_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc")
+		_ = buf.Flush()
+		_ = conn.Close()
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "cache")
+	job := STRMJob{STRMPath: filepath.Join(dir, "a.strm"), URL: server.URL}
+	_, err := ProcessSingleSTRMWithContext(nil, server.Client(), newRateLimiter(0), STRMProcessOptions{
+		CacheDir:    cacheDir,
+		DownloadDir: filepath.Join(dir, "download"),
+		Mode:        Mode189PC,
+	}, job)
+	if err == nil {
+		t.Fatalf("expected download failure, got nil")
+	}
+	tempPath := filepath.Join(cacheDir, urlHash(server.URL)+".part")
+	if _, statErr := os.Stat(tempPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected temp cache removed after failure, stat err: %v", statErr)
+	}
 }
 
 func TestCleanupStaleCachePartsKeepsNewestByConcurrency(t *testing.T) {
