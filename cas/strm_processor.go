@@ -585,11 +585,30 @@ func decodeURLFileName(v string) string {
 	if v == "" {
 		return ""
 	}
+	pathDecoded := v
 	if decoded, err := url.PathUnescape(v); err == nil && strings.TrimSpace(decoded) != "" {
-		return decoded
+		pathDecoded = decoded
 	}
+	queryDecoded := v
 	if decoded, err := url.QueryUnescape(v); err == nil && strings.TrimSpace(decoded) != "" {
-		return decoded
+		queryDecoded = decoded
+	}
+	if strings.Contains(v, "+") && queryDecoded != v {
+		return queryDecoded
+	}
+	if strings.Contains(v, "%") {
+		if pathDecoded != v {
+			return pathDecoded
+		}
+		if queryDecoded != v {
+			return queryDecoded
+		}
+	}
+	if pathDecoded != v {
+		return pathDecoded
+	}
+	if queryDecoded != v {
+		return queryDecoded
 	}
 	return v
 }

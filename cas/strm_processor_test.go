@@ -47,6 +47,14 @@ func TestResolveDownloadNameFromURLPathDecodesURLFilename(t *testing.T) {
 	}
 }
 
+func TestResolveDownloadNameFromURLPathDecodesPlusToSpace(t *testing.T) {
+	job := STRMJob{STRMPath: "/strm/a/test.strm", URL: "http://127.0.0.1/download/Room+No.9.2018.S01E01.1080p.30fps.AVC.AAC+2.0.mkv"}
+	resp := &http.Response{Header: make(http.Header)}
+	if got := resolveDownloadName(job, resp); got != "Room No.9.2018.S01E01.1080p.30fps.AVC.AAC 2.0.mkv" {
+		t.Fatalf("unexpected decoded plus url name: %s", got)
+	}
+}
+
 func TestResolveDownloadNameFallbackToSTRMBase(t *testing.T) {
 	job := STRMJob{STRMPath: "/strm/a/test.strm", URL: "http://127.0.0.1/api/cas/play/164"}
 	resp := &http.Response{Header: make(http.Header)}

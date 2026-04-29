@@ -28,6 +28,25 @@ func TestRenameEncodedCASFiles(t *testing.T) {
 	}
 }
 
+func TestRenameEncodedCASFilesPlusToSpace(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := filepath.Join(dir, "Room+No.9.2018.S01E01.1080p.30fps.AVC.AAC+2.0.mkv.cas")
+	if err := os.WriteFile(oldPath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write old cas err: %v", err)
+	}
+	summary, err := RenameEncodedCASFiles(dir)
+	if err != nil {
+		t.Fatalf("RenameEncodedCASFiles err: %v", err)
+	}
+	if summary.Renamed != 1 || summary.Conflicts != 0 {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+	newPath := filepath.Join(dir, "Room No.9.2018.S01E01.1080p.30fps.AVC.AAC 2.0.mkv.cas")
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("expected renamed cas exists: %v", err)
+	}
+}
+
 func TestRenameEncodedCASFilesConflict(t *testing.T) {
 	dir := t.TempDir()
 	oldPath := filepath.Join(dir, "The%20Movie%20%E4%B8%AD%E6%96%87.mkv.cas")
