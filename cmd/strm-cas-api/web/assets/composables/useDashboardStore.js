@@ -33,6 +33,7 @@ export function useDashboardStore() {
       saveSettings: false,
       retryFailed: false,
       reconcileDB: false,
+      renameCAS: false,
       clearDB: false,
       records: false,
       detail: false,
@@ -274,6 +275,14 @@ export function useDashboardStore() {
     }, 'reconcileDB')
   }
 
+  async function renameCAS() {
+    return wrap(async () => {
+      const res = await dashboardService.renameDecodedCAS()
+      requestDashboardSnapshot()
+      return res
+    }, 'renameCAS')
+  }
+
   async function start() {
     return wrap(async () => {
       const res = await dashboardService.startTasks({ mode: state.startMode, status: state.filters.status, search: state.filters.search })
@@ -379,6 +388,7 @@ export function useDashboardStore() {
     loadDetail,
     scan,
     reconcileDB,
+    renameCAS,
     start,
     startCurrentFilter,
     startSelected,

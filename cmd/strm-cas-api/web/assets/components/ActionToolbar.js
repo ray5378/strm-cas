@@ -12,13 +12,14 @@ export const ActionToolbar = {
     autoRefreshLabel: { type: String, default: '空闲 15s / 运行中 3s' },
     settings: { type: Object, default: () => ({ concurrency: 2, total_rate_limit_mb: 0, max_file_size_gb: 0 }) },
   },
-  emits: ['scan', 'reconcile-db', 'start', 'stop', 'stop-after-current', 'retry-failed', 'refresh', 'save-settings', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel', 'toggle-auto-refresh', 'update-settings'],
+  emits: ['scan', 'reconcile-db', 'rename-cas', 'start', 'stop', 'stop-after-current', 'retry-failed', 'refresh', 'save-settings', 'set-mode', 'clear-step1', 'clear-step2', 'clear-cancel', 'toggle-auto-refresh', 'update-settings'],
   template: `
     <div class="section card">
       <div class="toolbar">
         <button @click="$emit('scan')" :disabled="running || loading.scan" :class="{ 'is-loading': loading.scan }">{{ loading.scan ? '扫描中...' : '扫描 /strm' }}</button>
         <button @click="$emit('reconcile-db')" :disabled="running || loading.reconcileDB" :class="{ 'is-loading': loading.reconcileDB }">{{ loading.reconcileDB ? '纠正中...' : '纠正数据库' }}</button>
-        <span class="muted">扫描只更新数据库记录；纠正数据库会以当前 .strm 和实际存在的 .cas 为准修正状态</span>
+        <button @click="$emit('rename-cas')" :disabled="running || loading.renameCAS" :class="{ 'is-loading': loading.renameCAS }">{{ loading.renameCAS ? '纠正中...' : '纠正 CAS 文件名' }}</button>
+        <span class="muted">扫描只更新数据库记录；纠正数据库会以当前 .strm 和实际存在的 .cas 为准修正状态；纠正 CAS 文件名会扫描最终 download 目录并把 URL 编码名改回正常文件名</span>
       </div>
       <div class="toolbar section">
         <strong>运行设置：</strong>

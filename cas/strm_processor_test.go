@@ -30,6 +30,23 @@ func TestResolveDownloadNameFromHeader(t *testing.T) {
 	}
 }
 
+func TestResolveDownloadNameFromHeaderDecodesURLFilename(t *testing.T) {
+	job := STRMJob{STRMPath: "/strm/a/test.strm", URL: "http://127.0.0.1/download/1"}
+	resp := &http.Response{Header: make(http.Header)}
+	resp.Header.Set("Content-Disposition", `attachment; filename="The%20Movie%20%E4%B8%AD%E6%96%87.mkv"`)
+	if got := resolveDownloadName(job, resp); got != "The Movie 中文.mkv" {
+		t.Fatalf("unexpected decoded name: %s", got)
+	}
+}
+
+func TestResolveDownloadNameFromURLPathDecodesURLFilename(t *testing.T) {
+	job := STRMJob{STRMPath: "/strm/a/test.strm", URL: "http://127.0.0.1/download/The%20Movie%20%E4%B8%AD%E6%96%87.mkv"}
+	resp := &http.Response{Header: make(http.Header)}
+	if got := resolveDownloadName(job, resp); got != "The Movie 中文.mkv" {
+		t.Fatalf("unexpected decoded url name: %s", got)
+	}
+}
+
 func TestResolveDownloadNameFallbackToSTRMBase(t *testing.T) {
 	job := STRMJob{STRMPath: "/strm/a/test.strm", URL: "http://127.0.0.1/api/cas/play/164"}
 	resp := &http.Response{Header: make(http.Header)}

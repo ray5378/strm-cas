@@ -4,6 +4,7 @@ export const dashboardService = {
   saveSettings: (payload) => postJSON('/api/settings', payload || {}),
   refreshScan: () => postJSON('/api/scan/refresh'),
   reconcileDB: () => postJSON('/api/db/reconcile'),
+  renameDecodedCAS: () => postJSON('/api/cas/rename-decode'),
   startTasks: (payload) => postJSON('/api/tasks/start', payload || {}),
   startSelectedTasks: (paths) => postJSON('/api/tasks/start-selected', { paths }),
   stopTasks: () => postJSON('/api/tasks/stop'),

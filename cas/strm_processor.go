@@ -544,7 +544,7 @@ func resolveDownloadName(job STRMJob, resp *http.Response) string {
 					}
 				}
 				if name := strings.TrimSpace(params["filename"]); name != "" {
-					return sanitizeFileName(name)
+					return sanitizeFileName(decodeURLFileName(name))
 				}
 			}
 		}
@@ -553,7 +553,7 @@ func resolveDownloadName(job STRMJob, resp *http.Response) string {
 		base := path.Base(u.Path)
 		if base != "" && base != "/" && base != "." {
 			if strings.Contains(base, ".") {
-				return sanitizeFileName(base)
+				return sanitizeFileName(decodeURLFileName(base))
 			}
 		}
 	}
@@ -577,7 +577,21 @@ func decodeRFC5987(v string) string {
 			return decoded
 		}
 	}
-	return strings.Trim(v, "\"")
+	return decodeURLFileName(strings.Trim(v, "\""))
+}
+
+func decodeURLFileName(v string) string {
+	v = strings.TrimSpace(strings.Trim(v, "\""))
+	if v == "" {
+		return ""
+	}
+	if decoded, err := url.PathUnescape(v); err == nil && strings.TrimSpace(decoded) != "" {
+		return decoded
+	}
+	if decoded, err := url.QueryUnescape(v); err == nil && strings.TrimSpace(decoded) != "" {
+		return decoded
+	}
+	return v
 }
 
 func sanitizeFileName(name string) string {

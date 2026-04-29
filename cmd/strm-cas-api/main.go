@@ -127,6 +127,7 @@ func main() {
 	mux.HandleFunc("/api/runtime/ws", app.handleRuntimeWS)
 	mux.HandleFunc("/api/scan/refresh", app.handleScanRefresh)
 	mux.HandleFunc("/api/db/reconcile", app.handleDBReconcile)
+	mux.HandleFunc("/api/cas/rename-decode", app.handleCASRenameDecode)
 	mux.HandleFunc("/api/tasks/start", app.handleTasksStart)
 	mux.HandleFunc("/api/tasks/start-selected", app.handleStartSelected)
 	mux.HandleFunc("/api/tasks/stop", app.handleTasksStop)
@@ -480,6 +481,24 @@ func (a *app) handleDBReconcile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary, err := cas.ReconcileState(a.db, a.cfg.STRMRoot, a.cfg.DownloadDir)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	a.invalidateStateCaches()
+	writeJSON(w, summary)
+}
+
+func (a *app) handleCASRenameDecode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	if a.runtime.Snapshot().Running {
+		writeErr(w, fmt.Errorf("task is running, cannot rename cas files"), 409)
+		return
+	}
+	summary, err := cas.RenameEncodedCASFiles(a.cfg.DownloadDir)
 	if err != nil {
 		writeErr(w, err, 500)
 		return
