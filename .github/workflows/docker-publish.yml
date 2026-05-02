@@ -36,8 +36,6 @@ jobs:
         with:
           images: ray5378/strm-cas
           tags: |
-            type=ref,event=branch
-            type=ref,event=tag
             type=sha,prefix=main-
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
