@@ -14,8 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/robfig/cron/v3"
 
 	bolt "go.etcd.io/bbolt"
 	"strm-cas/cas"
@@ -25,11 +28,19 @@ import (
 var webFS embed.FS
 
 type taskSettings struct {
-	Concurrency      int   `json:"concurrency"`
-	TotalRateLimit   int64 `json:"total_rate_limit_bytes"`
-	TotalRateLimitMB int   `json:"total_rate_limit_mb"`
-	MaxFileSizeGB    int   `json:"max_file_size_gb"`
-	MaxFileSizeBytes int64 `json:"max_file_size_bytes"`
+	Concurrency                  int    `json:"concurrency"`
+	TotalRateLimit               int64  `json:"total_rate_limit_bytes"`
+	TotalRateLimitMB             int    `json:"total_rate_limit_mb"`
+	MaxFileSizeMinGB             int    `json:"max_file_size_min_gb"`
+	MaxFileSizeMaxGB             int    `json:"max_file_size_max_gb"`
+	MaxFileSizeBytes             int64  `json:"max_file_size_bytes,omitempty"`
+	MaxFileSizeMinBytes          int64  `json:"max_file_size_min_bytes"`
+	MaxFileSizeMaxBytes          int64  `json:"max_file_size_max_bytes"`
+	ScheduledDownloadCron        string `json:"scheduled_download_cron,omitempty"`
+	ScheduledDownloadMode        string `json:"scheduled_download_mode,omitempty"`
+	ScheduledDownloadStatus      string `json:"scheduled_download_status,omitempty"`
+	ScheduledDownloadSearch      string `json:"scheduled_download_search,omitempty"`
+	ScheduledStopAfterCurrentCron string `json:"scheduled_stop_after_current_cron,omitempty"`
 }
 
 type wsClient struct {
@@ -40,29 +51,32 @@ type wsClient struct {
 }
 
 type app struct {
-	cfg              cas.STRMProcessOptions
-	runtime          *cas.RuntimeStore
-	db               *bolt.DB
-	mu               sync.Mutex
-	cancelMu         sync.Mutex
-	cancelRun        context.CancelFunc
-	gracefulStopMu   sync.Mutex
-	gracefulStopFlag bool
-	settingsMu        sync.RWMutex
-	settings          taskSettings
-	settingsPath      string
-	limiterMu         sync.RWMutex
-	activeLimiter     *cas.RateLimiter
-	statsMu           sync.RWMutex
-	statsCache        cas.Stats
-	statsCacheValid   bool
-	recordsIndexMu    sync.RWMutex
-	recordsIndexCache *cas.RecordsIndex
-	wsClientsMu       sync.RWMutex
-	wsClients         map[*wsClient]struct{}
-	runtimePushMu     sync.Mutex
-	runtimePushTimer  *time.Timer
-	runtimePushDelay  time.Duration
+	cfg               cas.STRMProcessOptions
+	runtime           *cas.RuntimeStore
+	db                *bolt.DB
+	mu                sync.Mutex
+	cancelMu          sync.Mutex
+	cancelRun         context.CancelFunc
+	gracefulStopMu    sync.Mutex
+	gracefulStopFlag  bool
+	settingsMu             sync.RWMutex
+	settings               taskSettings
+	settingsPath           string
+	scheduleMu             sync.Mutex
+	scheduledDownloadTimer *time.Timer
+	cronScheduleStopCh     chan struct{}
+	limiterMu              sync.RWMutex
+	activeLimiter          *cas.RateLimiter
+	statsMu                sync.RWMutex
+	statsCache             cas.Stats
+	statsCacheValid        bool
+	recordsIndexMu         sync.RWMutex
+	recordsIndexCache      *cas.RecordsIndex
+	wsClientsMu            sync.RWMutex
+	wsClients              map[*wsClient]struct{}
+	runtimePushMu          sync.Mutex
+	runtimePushTimer       *time.Timer
+	runtimePushDelay       time.Duration
 }
 
 func main() {
@@ -94,25 +108,27 @@ func main() {
 	defer db.Close()
 
 	settingsPath := envOr("STRM_CAS_SETTINGS_PATH", "/data/strm-cas-settings.json")
-	initialSettings := taskSettings{Concurrency: concurrency, TotalRateLimit: int64(rateMB) * 1024 * 1024, TotalRateLimitMB: rateMB, MaxFileSizeGB: 0, MaxFileSizeBytes: 0}
+	initialSettings := taskSettings{Concurrency: concurrency, TotalRateLimit: int64(rateMB) * 1024 * 1024, TotalRateLimitMB: rateMB, MaxFileSizeMinGB: 0, MaxFileSizeMaxGB: 0, MaxFileSizeMinBytes: 0, MaxFileSizeMaxBytes: 0, ScheduledDownloadCron: ""}
 	if saved, err := loadTaskSettings(settingsPath, initialSettings); err == nil {
 		initialSettings = saved
 		cfg.Concurrency = saved.Concurrency
 		cfg.TotalRateLimit = saved.TotalRateLimit
-		cfg.MaxFileSizeBytes = saved.MaxFileSizeBytes
+		cfg.MinFileSizeBytes = saved.MaxFileSizeMinBytes
+		cfg.MaxFileSizeBytes = saved.MaxFileSizeMaxBytes
 	} else {
 		log.Printf("load settings skipped: %v", err)
 	}
 
 	app := &app{
-		cfg:              cfg,
-		runtime:          cas.NewRuntimeStore(1000),
-		db:               db,
-		settings:         initialSettings,
-		settingsPath:     settingsPath,
-		wsClients:        make(map[*wsClient]struct{}),
+		cfg:             cfg,
+		runtime:         cas.NewRuntimeStore(1000),
+		db:              db,
+		settings:        initialSettings,
+		settingsPath:    settingsPath,
+		wsClients:       make(map[*wsClient]struct{}),
 		runtimePushDelay: 250 * time.Millisecond,
 	}
+	app.applyScheduledTasks(initialSettings)
 	webSub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -128,6 +144,7 @@ func main() {
 	mux.HandleFunc("/api/scan/refresh", app.handleScanRefresh)
 	mux.HandleFunc("/api/db/reconcile", app.handleDBReconcile)
 	mux.HandleFunc("/api/cas/rename-decode", app.handleCASRenameDecode)
+	mux.HandleFunc("/api/cas/convert-download", app.handleCASConvertDownload)
 	mux.HandleFunc("/api/tasks/start", app.handleTasksStart)
 	mux.HandleFunc("/api/tasks/start-selected", app.handleStartSelected)
 	mux.HandleFunc("/api/tasks/stop", app.handleTasksStop)
@@ -267,9 +284,16 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, a.getSettings())
 	case http.MethodPost:
 		var req struct {
-			Concurrency      int `json:"concurrency"`
-			TotalRateLimitMB int `json:"total_rate_limit_mb"`
-			MaxFileSizeGB    int `json:"max_file_size_gb"`
+			Concurrency                  int    `json:"concurrency"`
+			TotalRateLimitMB             int    `json:"total_rate_limit_mb"`
+			MaxFileSizeMinGB             int    `json:"max_file_size_min_gb"`
+			MaxFileSizeMaxGB             int    `json:"max_file_size_max_gb"`
+			MaxFileSizeGB                int    `json:"max_file_size_gb"`
+			ScheduledDownloadCron        string `json:"scheduled_download_cron"`
+			ScheduledDownloadMode        string `json:"scheduled_download_mode"`
+			ScheduledDownloadStatus      string `json:"scheduled_download_status"`
+			ScheduledDownloadSearch      string `json:"scheduled_download_search"`
+			ScheduledStopAfterCurrentCron string `json:"scheduled_stop_after_current_cron"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeErr(w, fmt.Errorf("invalid body"), 400)
@@ -281,15 +305,28 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if req.TotalRateLimitMB < 0 {
 			req.TotalRateLimitMB = 0
 		}
-		if req.MaxFileSizeGB < 0 {
-			req.MaxFileSizeGB = 0
+		if req.MaxFileSizeMinGB < 0 {
+			req.MaxFileSizeMinGB = 0
+		}
+		if req.MaxFileSizeMaxGB < 0 {
+			req.MaxFileSizeMaxGB = 0
+		}
+		if req.MaxFileSizeMaxGB == 0 && req.MaxFileSizeGB > 0 {
+			req.MaxFileSizeMaxGB = req.MaxFileSizeGB
 		}
 		newSettings := taskSettings{
-			Concurrency:      req.Concurrency,
-			TotalRateLimitMB: req.TotalRateLimitMB,
-			TotalRateLimit:   int64(req.TotalRateLimitMB) * 1024 * 1024,
-			MaxFileSizeGB:    req.MaxFileSizeGB,
-			MaxFileSizeBytes: int64(req.MaxFileSizeGB) * 1024 * 1024 * 1024,
+			Concurrency:                   req.Concurrency,
+			TotalRateLimitMB:              req.TotalRateLimitMB,
+			TotalRateLimit:                int64(req.TotalRateLimitMB) * 1024 * 1024,
+			MaxFileSizeMinGB:              req.MaxFileSizeMinGB,
+			MaxFileSizeMaxGB:              req.MaxFileSizeMaxGB,
+			MaxFileSizeMinBytes:           int64(req.MaxFileSizeMinGB) * 1024 * 1024 * 1024,
+			MaxFileSizeMaxBytes:           int64(req.MaxFileSizeMaxGB) * 1024 * 1024 * 1024,
+			ScheduledDownloadCron:         normalizeScheduleCron(req.ScheduledDownloadCron),
+			ScheduledDownloadMode:         normalizeScheduleMode(req.ScheduledDownloadMode),
+			ScheduledDownloadStatus:       normalizeScheduleText(req.ScheduledDownloadStatus),
+			ScheduledDownloadSearch:       normalizeScheduleText(req.ScheduledDownloadSearch),
+			ScheduledStopAfterCurrentCron: normalizeScheduleCron(req.ScheduledStopAfterCurrentCron),
 		}
 		if err := saveTaskSettings(a.settingsPath, newSettings); err != nil {
 			writeErr(w, err, 500)
@@ -299,8 +336,10 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request) {
 		a.settings = newSettings
 		a.cfg.Concurrency = req.Concurrency
 		a.cfg.TotalRateLimit = int64(req.TotalRateLimitMB) * 1024 * 1024
-		a.cfg.MaxFileSizeBytes = int64(req.MaxFileSizeGB) * 1024 * 1024 * 1024
+		a.cfg.MinFileSizeBytes = int64(req.MaxFileSizeMinGB) * 1024 * 1024 * 1024
+		a.cfg.MaxFileSizeBytes = int64(req.MaxFileSizeMaxGB) * 1024 * 1024 * 1024
 		a.settingsMu.Unlock()
+		a.applyScheduledTasks(newSettings)
 		a.limiterMu.RLock()
 		limiter := a.activeLimiter
 		a.limiterMu.RUnlock()
@@ -377,11 +416,26 @@ func (a *app) handleRuntimeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accept := websocketAcceptKey(key)
-	if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n"); err != nil { _ = conn.Close(); return }
-	if _, err := rw.WriteString("Upgrade: websocket\r\n"); err != nil { _ = conn.Close(); return }
-	if _, err := rw.WriteString("Connection: Upgrade\r\n"); err != nil { _ = conn.Close(); return }
-	if _, err := rw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n\r\n"); err != nil { _ = conn.Close(); return }
-	if err := rw.Flush(); err != nil { _ = conn.Close(); return }
+	if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n"); err != nil {
+		_ = conn.Close()
+		return
+	}
+	if _, err := rw.WriteString("Upgrade: websocket\r\n"); err != nil {
+		_ = conn.Close()
+		return
+	}
+	if _, err := rw.WriteString("Connection: Upgrade\r\n"); err != nil {
+		_ = conn.Close()
+		return
+	}
+	if _, err := rw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n\r\n"); err != nil {
+		_ = conn.Close()
+		return
+	}
+	if err := rw.Flush(); err != nil {
+		_ = conn.Close()
+		return
+	}
 
 	client := &wsClient{ch: make(chan []byte, 16), done: make(chan struct{}), filters: cas.QueryOptions{Page: 1, PageSize: 10}}
 	a.wsClientsMu.Lock()
@@ -430,8 +484,12 @@ func (a *app) handleRuntimeWS(w http.ResponseWriter, r *http.Request) {
 			if req.Type == "subscribe" {
 				a.wsClientsMu.Lock()
 				client.filters = cas.QueryOptions{Status: req.Status, Search: req.Search, Page: req.Page, PageSize: req.PageSize}
-				if client.filters.Page <= 0 { client.filters.Page = 1 }
-				if client.filters.PageSize <= 0 { client.filters.PageSize = 10 }
+				if client.filters.Page <= 0 {
+					client.filters.Page = 1
+				}
+				if client.filters.PageSize <= 0 {
+					client.filters.PageSize = 10
+				}
 				client.detailPath = req.DetailPath
 				a.wsClientsMu.Unlock()
 				a.pushClientOverview(client)
@@ -507,6 +565,28 @@ func (a *app) handleCASRenameDecode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, summary)
 }
 
+func (a *app) handleCASConvertDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, fmt.Errorf("method not allowed"), 405)
+		return
+	}
+	if a.runtime.Snapshot().Running {
+		writeErr(w, fmt.Errorf("task is running, cannot convert download files to cas"), 409)
+		return
+	}
+	summary, err := cas.ConvertDownloadDirToCAS(a.cfg.DownloadDir, a.cfg.Mode)
+	if err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	if _, err := cas.ReconcileState(a.db, a.cfg.STRMRoot, a.cfg.DownloadDir); err != nil {
+		writeErr(w, err, 500)
+		return
+	}
+	a.invalidateStateCaches()
+	writeJSON(w, summary)
+}
+
 func writeStartSummary(w http.ResponseWriter, requested, matched, started int) {
 	writeJSON(w, map[string]any{"ok": true, "requested": requested, "matched": matched, "started": started, "skipped": requested - started})
 }
@@ -560,6 +640,21 @@ func (a *app) handleTasksStart(w http.ResponseWriter, r *http.Request) {
 		case "current_filter":
 			filtered = append(filtered, job)
 		default:
+			if status == "stopped" {
+				filtered = append(filtered, job)
+			}
+		}
+	}
+	if req.Mode == "pending" || req.Mode == "" {
+		for _, path := range paths {
+			job, ok := byPath[path]
+			if !ok {
+				continue
+			}
+			status := statuses[path]
+			if status == "" {
+				status = "pending"
+			}
 			if status == "pending" {
 				filtered = append(filtered, job)
 			}
@@ -635,6 +730,179 @@ func (a *app) handleTasksStopAfterCurrent(w http.ResponseWriter, r *http.Request
 	}
 	a.setGracefulStop(true)
 	writeJSON(w, map[string]any{"ok": true, "graceful_stopping": true})
+}
+
+func (a *app) applyScheduledTasks(s taskSettings) {
+	a.scheduleMu.Lock()
+	if a.scheduledDownloadTimer != nil {
+		a.scheduledDownloadTimer.Stop()
+		a.scheduledDownloadTimer = nil
+	}
+	if a.cronScheduleStopCh != nil {
+		close(a.cronScheduleStopCh)
+		a.cronScheduleStopCh = nil
+	}
+	if s.ScheduledDownloadCron != "" || s.ScheduledStopAfterCurrentCron != "" {
+		stopCh := make(chan struct{})
+		a.cronScheduleStopCh = stopCh
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+		if s.ScheduledDownloadCron != "" {
+			sched, err := parser.Parse(s.ScheduledDownloadCron)
+			if err != nil {
+				log.Printf("scheduled cron parse failed: %v", err)
+			} else {
+				mode := s.ScheduledDownloadMode
+				status := s.ScheduledDownloadStatus
+				search := s.ScheduledDownloadSearch
+				go func() {
+					next := sched.Next(time.Now())
+					for {
+						wait := time.Until(next)
+						if wait < time.Second {
+							wait = time.Second
+						}
+						select {
+						case <-time.After(wait):
+							_ = a.handleScheduledStart(taskSettings{ScheduledDownloadMode: mode, ScheduledDownloadStatus: status, ScheduledDownloadSearch: search})
+							next = sched.Next(time.Now())
+						case <-stopCh:
+							return
+						}
+					}
+				}()
+			}
+		}
+
+		if s.ScheduledStopAfterCurrentCron != "" {
+			sched, err := parser.Parse(s.ScheduledStopAfterCurrentCron)
+			if err != nil {
+				log.Printf("scheduled stop-after-current cron parse failed: %v", err)
+			} else {
+				go func() {
+					next := sched.Next(time.Now())
+					for {
+						wait := time.Until(next)
+						if wait < time.Second {
+							wait = time.Second
+						}
+						select {
+						case <-time.After(wait):
+							_ = a.handleScheduledStopAfterCurrent()
+							next = sched.Next(time.Now())
+						case <-stopCh:
+							return
+						}
+					}
+				}()
+			}
+		}
+	}
+	a.scheduleMu.Unlock()
+}
+
+func (a *app) handleScheduledStart(s taskSettings) error {
+	mode := s.ScheduledDownloadMode
+	if mode == "" {
+		mode = "pending"
+	}
+	req := struct {
+		Mode   string `json:"mode"`
+		Status string `json:"status"`
+		Search string `json:"search"`
+	}{Mode: mode, Status: s.ScheduledDownloadStatus, Search: s.ScheduledDownloadSearch}
+	jobs, err := a.currentJobs(false)
+	if err != nil {
+		log.Printf("scheduled start failed: %v", err)
+		return err
+	}
+	idx, err := a.getRecordsIndex()
+	if err != nil {
+		log.Printf("scheduled start failed: %v", err)
+		return err
+	}
+	paths := idx.QueryPaths(cas.QueryOptions{Status: req.Status, Search: req.Search})
+	byPath := make(map[string]cas.STRMJob, len(jobs))
+	for _, job := range jobs {
+		byPath[job.STRMPath] = job
+	}
+	statuses, err := cas.GetRecordStatusesByPaths(a.db, paths)
+	if err != nil {
+		log.Printf("scheduled start failed: %v", err)
+		return err
+	}
+	filtered := make([]cas.STRMJob, 0)
+	for _, path := range paths {
+		job, ok := byPath[path]
+		if !ok {
+			continue
+		}
+		status := statuses[path]
+		if status == "" {
+			status = "pending"
+		}
+		switch req.Mode {
+		case "failed":
+			if status == "failed" {
+				filtered = append(filtered, job)
+			}
+		case "current_filter":
+			filtered = append(filtered, job)
+		default:
+			if status == "stopped" {
+				filtered = append(filtered, job)
+			}
+		}
+	}
+	if req.Mode == "pending" || req.Mode == "" {
+		for _, path := range paths {
+			job, ok := byPath[path]
+			if !ok {
+				continue
+			}
+			status := statuses[path]
+			if status == "" {
+				status = "pending"
+			}
+			if status == "pending" {
+				filtered = append(filtered, job)
+			}
+		}
+	}
+	if len(filtered) == 0 {
+		log.Printf("scheduled start found no matching jobs")
+		return nil
+	}
+	if err := a.startJobs(filtered); err != nil {
+		log.Printf("scheduled start failed: %v", err)
+		return err
+	}
+	log.Printf("scheduled download started: mode=%s status=%s search=%s count=%d", req.Mode, req.Status, req.Search, len(filtered))
+	return nil
+}
+
+func (a *app) handleScheduledStopAfterCurrent() error {
+	if !a.runtime.Snapshot().Running {
+		log.Printf("scheduled stop-after-current skipped: no running task")
+		return nil
+	}
+	a.setGracefulStop(true)
+	log.Printf("scheduled stop-after-current executed")
+	return nil
+}
+
+func (a *app) handleScheduledStop() error {
+	a.cancelMu.Lock()
+	cancel := a.cancelRun
+	a.cancelMu.Unlock()
+	if cancel == nil {
+		log.Printf("scheduled stop skipped: no running task")
+		return nil
+	}
+	a.setGracefulStop(false)
+	cancel()
+	log.Printf("scheduled stop executed")
+	return nil
 }
 
 func (a *app) handleTaskRetry(w http.ResponseWriter, r *http.Request) {
@@ -833,7 +1101,8 @@ func (a *app) startJobs(jobs []cas.STRMJob) error {
 	cfg := a.cfg
 	cfg.Concurrency = settings.Concurrency
 	cfg.TotalRateLimit = settings.TotalRateLimit
-	cfg.MaxFileSizeBytes = settings.MaxFileSizeBytes
+	cfg.MinFileSizeBytes = settings.MaxFileSizeMinBytes
+	cfg.MaxFileSizeBytes = settings.MaxFileSizeMaxBytes
 	ctx, cancel := context.WithCancel(context.Background())
 	cfg.Context = ctx
 	cfg.OnProgress = func(p cas.ProgressInfo) {
@@ -875,14 +1144,16 @@ func (a *app) startJobs(jobs []cas.STRMJob) error {
 				defer wg.Done()
 				for job := range jobCh {
 					jobCfg := cfg
-					jobCfg.MaxFileSizeBytes = a.getSettings().MaxFileSizeBytes
+					runtimeSettings := a.getSettings()
+					jobCfg.MinFileSizeBytes = runtimeSettings.MaxFileSizeMinBytes
+					jobCfg.MaxFileSizeBytes = runtimeSettings.MaxFileSizeMaxBytes
 					res, err := cas.ProcessSingleSTRMWithContext(ctx, client, limiter, jobCfg, job)
 					if err != nil {
 						a.runtime.RemoveActive(job.STRMPath)
 						a.flushRuntimeSnapshot()
 						status := "failed"
 						if ctx.Err() != nil {
-							status = "skipped"
+							status = "stopped"
 						}
 						if job.ParseError != "" {
 							status = "exception"
@@ -965,6 +1236,13 @@ func envOrInt(k string, def int) int {
 	return def
 }
 
+func bytesToWholeGB(size int64) int {
+	if size <= 0 {
+		return 0
+	}
+	return int(size / (1024 * 1024 * 1024))
+}
+
 func loadTaskSettings(path string, fallback taskSettings) (taskSettings, error) {
 	if path == "" {
 		return fallback, nil
@@ -986,11 +1264,30 @@ func loadTaskSettings(path string, fallback taskSettings) (taskSettings, error) 
 	if s.TotalRateLimitMB < 0 {
 		s.TotalRateLimitMB = 0
 	}
-	if s.MaxFileSizeGB < 0 {
-		s.MaxFileSizeGB = 0
+	if s.MaxFileSizeMinGB < 0 {
+		s.MaxFileSizeMinGB = 0
 	}
+	if s.MaxFileSizeMaxGB < 0 {
+		s.MaxFileSizeMaxGB = 0
+	}
+	if s.MaxFileSizeMaxGB == 0 && s.MaxFileSizeBytes > 0 {
+		s.MaxFileSizeMaxGB = int(bytesToWholeGB(s.MaxFileSizeBytes))
+		s.MaxFileSizeMaxBytes = s.MaxFileSizeBytes
+	}
+	if s.MaxFileSizeMaxGB == 0 && s.MaxFileSizeMinGB > 0 {
+		s.MaxFileSizeMaxGB = s.MaxFileSizeMinGB
+	}
+	s.ScheduledDownloadCron = normalizeScheduleCron(s.ScheduledDownloadCron)
+	s.ScheduledDownloadMode = normalizeScheduleMode(s.ScheduledDownloadMode)
+	s.ScheduledDownloadStatus = normalizeScheduleText(s.ScheduledDownloadStatus)
+	s.ScheduledDownloadSearch = normalizeScheduleText(s.ScheduledDownloadSearch)
+	s.ScheduledStopAfterCurrentCron = normalizeScheduleCron(s.ScheduledStopAfterCurrentCron)
 	s.TotalRateLimit = int64(s.TotalRateLimitMB) * 1024 * 1024
-	s.MaxFileSizeBytes = int64(s.MaxFileSizeGB) * 1024 * 1024 * 1024
+	s.MaxFileSizeMinBytes = int64(s.MaxFileSizeMinGB) * 1024 * 1024 * 1024
+	s.MaxFileSizeMaxBytes = int64(s.MaxFileSizeMaxGB) * 1024 * 1024 * 1024
+	if s.MaxFileSizeBytes == 0 && s.MaxFileSizeMaxBytes > 0 {
+		s.MaxFileSizeBytes = s.MaxFileSizeMaxBytes
+	}
 	return s, nil
 }
 
@@ -1007,6 +1304,32 @@ func saveTaskSettings(path string, s taskSettings) error {
 	}
 	return os.WriteFile(path, body, 0o644)
 }
+
+func normalizeScheduleCron(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	if _, err := parser.Parse(v); err != nil {
+		return ""
+	}
+	return v
+}
+
+func normalizeScheduleMode(v string) string {
+	switch strings.TrimSpace(v) {
+	case "failed", "current_filter":
+		return strings.TrimSpace(v)
+	default:
+		return "pending"
+	}
+}
+
+func normalizeScheduleText(v string) string {
+	return strings.TrimSpace(v)
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
@@ -1018,7 +1341,7 @@ func (a *app) buildOverviewPayload() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(map[string]any{
-		"type": "overview",
+		"type":     "overview",
 		"overview": map[string]any{"stats": stats, "runtime": a.runtime.Snapshot(), "settings": a.getSettings()},
 	})
 }
@@ -1047,9 +1370,9 @@ func (a *app) buildDashboardPayload(filters cas.QueryOptions, detailPath string)
 		}
 	}
 	return json.Marshal(map[string]any{
-		"type": "dashboard",
+		"type":    "dashboard",
 		"records": cas.QueryResult{Total: total, Items: items},
-		"detail": detail,
+		"detail":  detail,
 	})
 }
 
@@ -1187,8 +1510,12 @@ func splitComma(v string) []string {
 
 func trimASCII(s string) string {
 	start, end := 0, len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') { start++ }
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') { end-- }
+	for start < end && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
 	return s[start:end]
 }
 

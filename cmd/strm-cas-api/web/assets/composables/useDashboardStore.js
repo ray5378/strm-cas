@@ -9,7 +9,7 @@ function wsURL(path) {
 export function useDashboardStore() {
   const state = reactive({
     overview: null,
-    settings: { concurrency: 2, total_rate_limit_mb: 0, max_file_size_gb: 0 },
+    settings: { concurrency: 2, total_rate_limit_mb: 0, max_file_size_min_gb: 0, max_file_size_max_gb: 0, scheduled_download_cron: '', scheduled_download_mode: 'pending', scheduled_download_status: '', scheduled_download_search: '', scheduled_stop_after_current_cron: '' },
     records: { total: 0, items: [] },
     detail: null,
     reconcileSummary: null,
@@ -34,6 +34,7 @@ export function useDashboardStore() {
       retryFailed: false,
       reconcileDB: false,
       renameCAS: false,
+      convertDownloadCAS: false,
       clearDB: false,
       records: false,
       detail: false,
@@ -90,7 +91,13 @@ export function useDashboardStore() {
       state.settings = {
         concurrency: state.overview.settings.concurrency || 1,
         total_rate_limit_mb: state.overview.settings.total_rate_limit_mb || 0,
-        max_file_size_gb: state.overview.settings.max_file_size_gb || 0,
+        max_file_size_min_gb: state.overview.settings.max_file_size_min_gb || 0,
+        max_file_size_max_gb: state.overview.settings.max_file_size_max_gb || 0,
+        scheduled_download_cron: state.overview.settings.scheduled_download_cron || '',
+        scheduled_download_mode: state.overview.settings.scheduled_download_mode || 'pending',
+        scheduled_download_status: state.overview.settings.scheduled_download_status || '',
+        scheduled_download_search: state.overview.settings.scheduled_download_search || '',
+        scheduled_stop_after_current_cron: state.overview.settings.scheduled_stop_after_current_cron || '',
       }
     }
   }
@@ -231,7 +238,13 @@ export function useDashboardStore() {
       state.settings = {
         concurrency: s.concurrency || 1,
         total_rate_limit_mb: s.total_rate_limit_mb || 0,
-        max_file_size_gb: s.max_file_size_gb || 0,
+        max_file_size_min_gb: s.max_file_size_min_gb || 0,
+        max_file_size_max_gb: s.max_file_size_max_gb || 0,
+        scheduled_download_cron: s.scheduled_download_cron || '',
+        scheduled_download_mode: s.scheduled_download_mode || 'pending',
+        scheduled_download_status: s.scheduled_download_status || '',
+        scheduled_download_search: s.scheduled_download_search || '',
+        scheduled_stop_after_current_cron: s.scheduled_stop_after_current_cron || '',
       }
       requestDashboardSnapshot()
       return s
@@ -281,6 +294,14 @@ export function useDashboardStore() {
       requestDashboardSnapshot()
       return res
     }, 'renameCAS')
+  }
+
+  async function convertDownloadCAS() {
+    return wrap(async () => {
+      const res = await dashboardService.convertDownloadToCAS()
+      requestDashboardSnapshot()
+      return res
+    }, 'convertDownloadCAS')
   }
 
   async function start() {
@@ -389,6 +410,7 @@ export function useDashboardStore() {
     scan,
     reconcileDB,
     renameCAS,
+    convertDownloadCAS,
     start,
     startCurrentFilter,
     startSelected,

@@ -28,7 +28,6 @@ export const DashboardApp = {
     const toast = useToast()
     const runtime = computed(() => store.state.overview?.runtime || {})
     const stats = computed(() => store.state.overview?.stats || {})
-    const autoRefreshLabel = computed(() => (store.state.runtimeSocketConnected ? 'WebSocket 已连接' : 'WebSocket 重连中'))
     const confirmState = reactive({ visible: false, title: '', message: '', confirmText: '确认', action: null })
     let timer = null
 
@@ -183,7 +182,6 @@ export const DashboardApp = {
       stats,
       toast,
       runAction,
-      autoRefreshLabel,
       toggleAutoRefresh,
       confirmState,
       openConfirm,
@@ -207,7 +205,7 @@ export const DashboardApp = {
         :title="confirmState.title"
         :message="confirmState.message"
         :confirm-text="confirmState.confirmText"
-        :loading="store.state.loading.start || store.state.loading.retryFailed || store.state.loading.stop || store.state.loading.stopAfterCurrent || store.state.loading.reconcileDB || store.state.loading.renameCAS"
+        :loading="store.state.loading.start || store.state.loading.retryFailed || store.state.loading.stop || store.state.loading.stopAfterCurrent || store.state.loading.reconcileDB || store.state.loading.renameCAS || store.state.loading.convertDownloadCAS"
         @confirm="confirmAndRun"
         @cancel="closeConfirm"
       />
@@ -225,20 +223,18 @@ export const DashboardApp = {
         :start-mode="store.state.startMode"
         :confirm-clear="store.state.confirmClear"
         :loading="store.state.loading"
-        :auto-refresh-enabled="store.state.autoRefreshEnabled"
-        :auto-refresh-label="autoRefreshLabel"
         :settings="store.state.settings"
         @scan="runAction(() => store.scan(), '扫描完成')"
         @reconcile-db="runAction(() => store.reconcileDB(), (res) => toastResult(res, '数据库已纠正'))"
         @rename-cas="runAction(() => store.renameCAS(), (res) => 'CAS 文件名已纠正：重命名 ' + (res?.renamed || 0) + '，跳过 ' + (res?.skipped || 0) + '，冲突 ' + (res?.conflicts || 0))"
+        @convert-download-cas="runAction(() => store.convertDownloadCAS(), (res) => '目标目录转换完成：扫描 ' + (res?.total_files || 0) + '，转换 ' + (res?.converted || 0) + '，删除源文件 ' + (res?.deleted || 0) + '，冲突 ' + (res?.conflicts || 0) + '，失败 ' + (res?.failed || 0))"
         @start="runAction(() => store.start(), (res) => toastResult(res, '任务已启动'))"
         @stop-after-current="confirmStopAfterCurrentTasks"
         @stop="confirmStopTasks"
         @retry-failed="runAction(() => store.retryFailed(), (res) => toastResult(res, '失败任务已重新加入队列'))"
         @refresh="runAction(() => store.refreshAll(), '已刷新')"
-        @save-settings="runAction(() => store.saveSettings(), '设置已保存，将作用于后续启动的任务')"
+        @save-settings="runAction(() => store.saveSettings(), '设置已保存，定时下载/停止也已同步')"
         @update-settings="updateSettingsField"
-        @toggle-auto-refresh="toggleAutoRefresh"
         @set-mode="store.state.startMode = $event"
         @clear-step1="store.state.confirmClear = true"
         @clear-step2="runAction(() => store.clearDB(), '数据库已清理')"

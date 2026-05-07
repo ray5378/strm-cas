@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -36,6 +37,7 @@ type STRMProcessOptions struct {
 	UserAgent           string
 	KeepDownload        bool
 	SkipExistingCAS     bool
+	MinFileSizeBytes    int64
 	MaxFileSizeBytes    int64
 	LogPath             string
 	DBPath              string
@@ -51,6 +53,7 @@ type STRMProcessResult struct {
 	DownloadPath     string  `json:"download_path,omitempty"`
 	CASPath          string  `json:"cas_path,omitempty"`
 	Size             int64   `json:"size,omitempty"`
+	FilteredMinGB    int     `json:"filtered_min_gb,omitempty"`
 	FilteredMaxGB    int     `json:"filtered_max_gb,omitempty"`
 	FilteredRemoteGB int64   `json:"filtered_remote_gb,omitempty"`
 	Status           string  `json:"status"`
@@ -316,12 +319,12 @@ func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limi
 
 	tempPath := filepath.Join(opts.CacheDir, urlHash(job.URL)+".part")
 	defer func() {
-		if err == nil || tempPath == "" {
+		if err == nil || tempPath == "" || isCancellationError(err) {
 			return
 		}
 		_ = os.Remove(tempPath)
 	}()
-	if opts.MaxFileSizeBytes > 0 && meta != nil && meta.TotalSize > opts.MaxFileSizeBytes {
+	if meta != nil && !fileSizeInRange(meta.TotalSize, opts.MinFileSizeBytes, opts.MaxFileSizeBytes) {
 		return filteredResult(job, filepath.Join(downloadDir, nameHint), casHintPath, tempPath, meta.TotalSize, opts)
 	}
 	partialSize := fileSizeIfExists(tempPath)
@@ -389,7 +392,7 @@ func ProcessSingleSTRMWithContext(ctx context.Context, client *http.Client, limi
 		return res, nil
 	}
 	remoteTotal := contentTotal(resp.ContentLength, partialSize)
-	if opts.MaxFileSizeBytes > 0 && remoteTotal > opts.MaxFileSizeBytes {
+	if !fileSizeInRange(remoteTotal, opts.MinFileSizeBytes, opts.MaxFileSizeBytes) {
 		return filteredResult(job, finalPath, casPath, tempPath, remoteTotal, opts)
 	}
 	progress(ProgressInfo{Job: job, Stage: "downloading", FileName: nameHint, DownloadedBytes: partialSize, TotalBytes: remoteTotal, Message: "downloading"})
@@ -558,23 +561,42 @@ func bytesToWholeGB(size int64) int {
 	return int(size / (1024 * 1024 * 1024))
 }
 
+func fileSizeInRange(size, minBytes, maxBytes int64) bool {
+	if size <= 0 {
+		return false
+	}
+	if minBytes > 0 && size < minBytes {
+		return false
+	}
+	if maxBytes > 0 && size > maxBytes {
+		return false
+	}
+	return true
+}
+
+func isCancellationError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func filteredResult(job STRMJob, downloadPath, casPath, tempPath string, remoteTotal int64, opts STRMProcessOptions) (*STRMProcessResult, error) {
 	if tempPath != "" {
 		if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
 	}
-	limitGB := bytesToWholeGB(opts.MaxFileSizeBytes)
+	minGB := bytesToWholeGB(opts.MinFileSizeBytes)
+	maxGB := bytesToWholeGB(opts.MaxFileSizeBytes)
 	remoteGB := bytesToWholeGBCeil(remoteTotal)
 	res := &STRMProcessResult{
 		Job:              job,
 		DownloadPath:     downloadPath,
 		CASPath:          casPath,
 		Size:             remoteTotal,
-		FilteredMaxGB:    limitGB,
+		FilteredMinGB:    minGB,
+		FilteredMaxGB:    maxGB,
 		FilteredRemoteGB: remoteGB,
 		Status:           "filtered",
-		Message:          fmt.Sprintf("file size %d GB exceeds limit %d GB", remoteGB, limitGB),
+		Message:          fmt.Sprintf("file size %d GB not in range %d-%d GB", remoteGB, minGB, maxGB),
 	}
 	if opts.OnResult != nil {
 		opts.OnResult(*res)

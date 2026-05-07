@@ -38,6 +38,9 @@ func BuildRecordsIndexFromRecords(records []StateRecord) *RecordsIndex {
 		if rec.Status == "" {
 			rec.Status = "pending"
 		}
+		if rec.Status == "stopped" && rec.LastProcessedAt == "" {
+			rec.LastProcessedAt = rec.LastSeenAt
+		}
 		normalized = append(normalized, rec)
 	}
 	sortRecords(normalized)
@@ -65,6 +68,8 @@ func BuildRecordsIndexFromRecords(records []StateRecord) *RecordsIndex {
 			idx.stats.Failed++
 		case "exception":
 			idx.stats.Exception++
+		case "stopped":
+			idx.stats.Pending++
 		default:
 			idx.stats.Pending++
 		}
@@ -112,7 +117,11 @@ func (idx *RecordsIndex) QueryPagePaths(opts QueryOptions) ([]string, int) {
 func (idx *RecordsIndex) filter(opts QueryOptions) []indexedRecord {
 	base := idx.all
 	if opts.Status != "" {
-		base = idx.byStatus[opts.Status]
+		if opts.Status == "pending" {
+			base = append(append([]indexedRecord{}, idx.byStatus["pending"]...), idx.byStatus["stopped"]...)
+		} else {
+			base = idx.byStatus[opts.Status]
+		}
 	}
 	if q := strings.ToLower(strings.TrimSpace(opts.Search)); q != "" {
 		filtered := make([]indexedRecord, 0, len(base))
@@ -369,8 +378,14 @@ func filterPaginateRecords(records []StateRecord, opts QueryOptions) QueryResult
 func applyRecordFilters(records []StateRecord, opts QueryOptions) []StateRecord {
 	filtered := make([]StateRecord, 0, len(records))
 	for _, rec := range records {
-		if opts.Status != "" && rec.Status != opts.Status {
-			continue
+		if opts.Status != "" {
+			if opts.Status == "pending" {
+				if rec.Status != "pending" && rec.Status != "stopped" {
+					continue
+				}
+			} else if rec.Status != opts.Status {
+				continue
+			}
 		}
 		if q := strings.ToLower(strings.TrimSpace(opts.Search)); q != "" {
 			blob := strings.ToLower(strings.Join([]string{rec.STRMPath, rec.URL, rec.RelativeDir, rec.LastMessage, rec.CASPath, rec.DownloadPath}, " "))

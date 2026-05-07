@@ -175,6 +175,8 @@ func ComputeStats(db *bolt.DB, jobs []STRMJob) (Stats, error) {
 				stats.Filtered++
 			case "exception":
 				stats.Exception++
+			case "stopped":
+				stats.Pending++
 			default:
 				stats.Pending++
 			}

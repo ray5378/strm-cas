@@ -38,6 +38,7 @@ func TestRecordsIndexQuery(t *testing.T) {
 		{STRMPath: "/strm/c.strm", URL: "http://c", Status: "failed", LastMessage: "network error", LastProcessedAt: time.Now().Add(-time.Minute).Format(time.RFC3339)},
 		{STRMPath: "/strm/a.strm", URL: "http://a", Status: "done", LastMessage: "ok", LastProcessedAt: time.Now().Format(time.RFC3339)},
 		{STRMPath: "/strm/b.strm", URL: "http://b", Status: "pending", LastMessage: "", LastProcessedAt: time.Now().Add(-2 * time.Minute).Format(time.RFC3339)},
+		{STRMPath: "/strm/d.strm", URL: "http://d", Status: "stopped", LastMessage: "stopped by user", LastProcessedAt: time.Now().Add(-3 * time.Minute).Format(time.RFC3339)},
 	}
 
 	idx := BuildRecordsIndexFromRecords(records)
@@ -46,7 +47,7 @@ func TestRecordsIndexQuery(t *testing.T) {
 	}
 
 	paths, total := idx.QueryPagePaths(QueryOptions{Page: 1, PageSize: 2})
-	if total != 3 {
+	if total != 4 {
 		t.Fatalf("unexpected total: %d", total)
 	}
 	if len(paths) != 2 {
@@ -67,7 +68,12 @@ func TestRecordsIndexQuery(t *testing.T) {
 	}
 
 	stats := idx.Stats()
-	if stats.Total != 3 || stats.Done != 1 || stats.Failed != 1 || stats.Pending != 1 {
+	if stats.Total != 4 || stats.Done != 1 || stats.Failed != 1 || stats.Pending != 2 {
 		t.Fatalf("unexpected indexed stats: %+v", stats)
+	}
+
+	pending := idx.QueryPaths(QueryOptions{Status: "pending"})
+	if len(pending) != 2 {
+		t.Fatalf("expected pending + stopped in pending query, got %+v", pending)
 	}
 }

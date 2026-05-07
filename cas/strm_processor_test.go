@@ -1,6 +1,7 @@
 package cas
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -101,8 +102,9 @@ func TestProcessSingleSTRMFiltersByGetContentLengthWhenHeadUnavailable(t *testin
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", 2*1024*1024*1024))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", 10))
 		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "0123456789")
 	}))
 	defer server.Close()
 
@@ -120,7 +122,8 @@ func TestProcessSingleSTRMFiltersByGetContentLengthWhenHeadUnavailable(t *testin
 		CacheDir:         cacheDir,
 		DownloadDir:      filepath.Join(dir, "download"),
 		Mode:             Mode189PC,
-		MaxFileSizeBytes: 1 * 1024 * 1024 * 1024,
+		MinFileSizeBytes: 1 * 1024 * 1024 * 1024,
+		MaxFileSizeBytes: 3 * 1024 * 1024 * 1024,
 	}, job)
 	if err != nil {
 		t.Fatalf("ProcessSingleSTRMWithContext err: %v", err)
@@ -131,11 +134,45 @@ func TestProcessSingleSTRMFiltersByGetContentLengthWhenHeadUnavailable(t *testin
 	if res.Status != "filtered" {
 		t.Fatalf("expected filtered status, got: %+v", res)
 	}
-	if res.FilteredMaxGB != 1 || res.FilteredRemoteGB != 3 {
+	if res.FilteredMinGB != 1 || res.FilteredMaxGB != 3 || res.FilteredRemoteGB != 1 {
 		t.Fatalf("unexpected filtered gb info: %+v", res)
 	}
 	if _, statErr := os.Stat(tempPath); !os.IsNotExist(statErr) {
 		t.Fatalf("expected temp cache removed, stat err: %v", statErr)
+	}
+}
+
+func TestProcessSingleSTRMFiltersBySizeRange(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", "10")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Length", "10")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "0123456789")
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache err: %v", err)
+	}
+	job := STRMJob{STRMPath: filepath.Join(dir, "a.strm"), URL: server.URL}
+	res, err := ProcessSingleSTRMWithContext(nil, server.Client(), newRateLimiter(0), STRMProcessOptions{
+		CacheDir:         cacheDir,
+		DownloadDir:      filepath.Join(dir, "download"),
+		Mode:             Mode189PC,
+		MinFileSizeBytes: 20,
+		MaxFileSizeBytes: 30,
+	}, job)
+	if err != nil {
+		t.Fatalf("ProcessSingleSTRMWithContext err: %v", err)
+	}
+	if res == nil || res.Status != "filtered" {
+		t.Fatalf("expected filtered result, got %+v", res)
 	}
 }
 
@@ -215,6 +252,44 @@ func TestProcessSingleSTRMClearsPartialCacheOnDownloadFailure(t *testing.T) {
 	tempPath := filepath.Join(cacheDir, urlHash(server.URL)+".part")
 	if _, statErr := os.Stat(tempPath); !os.IsNotExist(statErr) {
 		t.Fatalf("expected temp cache removed after failure, stat err: %v", statErr)
+	}
+}
+
+func TestProcessSingleSTRMPreservesPartialCacheOnCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", "10")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Length", "10")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "abc")
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache err: %v", err)
+	}
+	tempPath := filepath.Join(cacheDir, urlHash(server.URL)+".part")
+	if err := os.WriteFile(tempPath, []byte("partial-cache"), 0o644); err != nil {
+		t.Fatalf("write temp cache err: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	job := STRMJob{STRMPath: filepath.Join(dir, "a.strm"), URL: server.URL}
+	_, err := ProcessSingleSTRMWithContext(ctx, server.Client(), newRateLimiter(0), STRMProcessOptions{
+		CacheDir:    cacheDir,
+		DownloadDir: filepath.Join(dir, "download"),
+		Mode:        Mode189PC,
+	}, job)
+	if err == nil {
+		t.Fatalf("expected cancellation error, got nil")
+	}
+	if _, statErr := os.Stat(tempPath); statErr != nil {
+		t.Fatalf("expected temp cache preserved on cancellation, stat err: %v", statErr)
 	}
 }
 
